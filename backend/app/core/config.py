@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = Field(default=10, ge=1)
     DB_MAX_OVERFLOW: int = Field(default=20, ge=0)
     DB_POOL_RECYCLE_SECONDS: int = Field(default=1800, ge=0)
+    ACCESS_TOKEN_TTL_MINUTES: int = Field(default=15, ge=1)
+    REFRESH_TOKEN_TTL_DAYS: int = Field(default=7, ge=1)
+    LOGIN_RATE_LIMIT_ATTEMPTS: int = Field(default=5, ge=1)
+    LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = Field(default=60, ge=1)
+    PASSWORD_MIN_LENGTH: int = Field(default=8, ge=8)
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

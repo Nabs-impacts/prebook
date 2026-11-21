@@ -6,7 +6,7 @@
 | --- | --- |
 | 1. Structure du backend | Terminée |
 | 2. Modèles base de données | Terminée |
-| 3. Authentification et rôles | À faire |
+| 3. Authentification et rôles | Terminée |
 | 4. Réglages du site | À faire |
 | 5. Catalogue et avis | À faire |
 | 6. Upload vidéo | À faire |
@@ -36,7 +36,18 @@
 - Contrainte d'unicité sur `provider` et `provider_reference` pour l'idempotence des paiements.
 - Relations SQLAlchemy en `lazy="raise"` pour empêcher les chargements implicites et les N+1.
 - Migration initiale `6d13fbe94f4d` appliquée, vérifiée en upgrade, downgrade puis upgrade, et validée par `alembic check`.
+- Mots de passe hachés avec Argon2 (`argon2-cffi`) et vérification sans révéler l'existence d'un compte.
+- JWT signés HS256 : access token de 15 minutes, refresh token de 7 jours avec `jti` et type de jeton. Les refresh tokens sont stockés hachés (SHA-256) dans Redis et consommés atomiquement pour la rotation.
+- Révocation des refresh tokens par utilisateur lors d'une désactivation, d'un changement de mot de passe ou d'une suppression. Le logout révoque aussi le `jti` de l'access token jusqu'à son expiration.
+- Rate limiting du login dans Redis : 5 tentatives par minute par couple IP/email, réponse `429` au-delà.
+- Dépendances `require_admin` et `require_super_admin` basées sur l'utilisateur rechargé depuis la base, afin de prendre en compte immédiatement les désactivations et changements de rôle.
+- Règles métier appliquées côté service : auto-suppression et auto-désactivation interdites, dernier super administrateur actif protégé, gestion des administrateurs réservée au super administrateur.
+- Table `admin_audit_logs` alimentée à chaque login réussi et à chaque création, modification ou suppression d'administrateur. `admin_id` est mis à NULL à la suppression de l'acteur, `target_id` reste conservé sans clé étrangère.
+- Migration `c3a9e5f7b2d1` appliquée et validée par `alembic upgrade`, `alembic downgrade -1`, `alembic upgrade head` et `alembic check`.
+- CLI `python -m app.cli create-super-admin` avec email et mot de passe lus depuis `--email`/`--password` ou `SUPER_ADMIN_EMAIL`/`SUPER_ADMIN_PASSWORD`, testée sur PostgreSQL.
+- Tests pytest portés à 28 : login réussi et échoué, message générique, compte inactif, rate limiting, rotation et réutilisation des refresh tokens, logout, rôles et permissions, auto-suppression, dernier super administrateur, pagination, audit et révocation après changement de mot de passe.
+- Validation finale : `ruff check`, `ruff format --check`, `mypy app tests`, `pytest` (28 tests), `alembic check`.
 
 ## Prochaine étape
 
-Étape 3 : authentification et rôles, avec hashing des mots de passe, jetons JWT et dépendances d'autorisation.
+Étape 4 : réglages du site, avec stockage JSONB, lecture cachée dans Redis et endpoints d'administration protégés.

@@ -76,6 +76,12 @@ class ConflictError(AppError):
     message = "Conflit de ressource."
 
 
+class TooManyRequestsError(AppError):
+    status_code = 429
+    code = "too_many_requests"
+    message = "Trop de tentatives, réessayez plus tard."
+
+
 class ServiceUnavailableError(AppError):
     status_code = 503
     code = "service_unavailable"

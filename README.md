@@ -55,6 +55,16 @@ uv run alembic revision --autogenerate -m "description"
 uv run alembic upgrade head
 ```
 
+## Premier super administrateur
+
+```bash
+cd backend
+SUPER_ADMIN_EMAIL=admin@example.com SUPER_ADMIN_PASSWORD='MotDePasseSolide123!' \
+  uv run python -m app.cli create-super-admin
+```
+
+Les options `--email` et `--password` sont aussi acceptées. Aucun identifiant n'est stocké dans le code.
+
 ## Worker ARQ
 
 ```bash
@@ -93,6 +103,33 @@ Les variables d'environnement sont définies dans `.env` :
 - `REDIS_URL`
 - `CORS_ORIGINS`
 - `LOG_LEVEL`
+- `ACCESS_TOKEN_TTL_MINUTES`
+- `REFRESH_TOKEN_TTL_DAYS`
+- `LOGIN_RATE_LIMIT_ATTEMPTS`
+- `LOGIN_RATE_LIMIT_WINDOW_SECONDS`
+- `PASSWORD_MIN_LENGTH`
+- `SUPER_ADMIN_EMAIL`
+- `SUPER_ADMIN_PASSWORD`
+
+## Authentification
+
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/auth/me`
+
+Les jetons d'accès durent 15 minutes et les jetons de rafraîchissement 7 jours, avec rotation et révocation stockée dans Redis. Le login est limité à 5 tentatives par minute et par couple IP/email.
+
+## Administration
+
+Les routes `/api/v1/admin/admins` sont réservées au rôle `super_admin` :
+
+- `GET` : liste paginée
+- `POST` : création d'un administrateur
+- `PATCH /{id}` : activation, désactivation ou changement de mot de passe
+- `DELETE /{id}` : suppression
+
+Chaque opération et chaque login administrateur alimente la table `admin_audit_logs`.
 
 ## Structure
 
