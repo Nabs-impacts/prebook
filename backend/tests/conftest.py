@@ -16,20 +16,29 @@ os.environ.setdefault(
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
 os.environ.setdefault("CORS_ORIGINS", "http://localhost:3000")
 
-from app.core.deps import get_admin_service, get_auth_service
+from app.core.deps import get_admin_service, get_auth_service, get_settings_service
 from app.main import create_app
 from app.repositories.admin import AdminRepository
 from app.repositories.login_attempt import LoginAttemptRepository
+from app.repositories.settings import SettingsRepository
 from app.repositories.token import TokenRepository
+from app.schemas.settings import SiteSettings
 from app.services.admin import AdminService
 from app.services.auth import AuthService
+from app.services.settings import SettingsService
 
-from tests.support import InMemoryAdminRepository
+from tests.support import InMemoryAdminRepository, InMemorySettingsRepository
+
+
+async def default_maintenance_settings() -> SiteSettings:
+    return SiteSettings()
 
 
 @pytest.fixture
 def app() -> FastAPI:
-    return create_app()
+    application = create_app()
+    application.state.maintenance_settings_provider = default_maintenance_settings
+    return application
 
 
 @pytest.fixture
@@ -42,6 +51,11 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
 @pytest.fixture
 def repository() -> InMemoryAdminRepository:
     return InMemoryAdminRepository()
+
+
+@pytest.fixture
+def settings_repository() -> InMemorySettingsRepository:
+    return InMemorySettingsRepository()
 
 
 @pytest.fixture
@@ -75,3 +89,37 @@ async def auth_client(
     async with AsyncClient(transport=transport, base_url="http://test") as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def settings_client(
+    app: FastAPI,
+    repository: InMemoryAdminRepository,
+    settings_repository: InMemorySettingsRepository,
+    fake_redis: FakeRedis,
+) -> AsyncIterator[AsyncClient]:
+    admin_repository = cast(AdminRepository, repository)
+    token_repository = TokenRepository(cast(Redis, fake_redis))
+    login_attempt_repository = LoginAttemptRepository(cast(Redis, fake_redis))
+    settings_service = SettingsService(
+        cast(SettingsRepository, settings_repository),
+        admin_repository,
+    )
+
+    app.dependency_overrides[get_auth_service] = lambda: AuthService(
+        admin_repository,
+        token_repository,
+        login_attempt_repository,
+    )
+    app.dependency_overrides[get_admin_service] = lambda: AdminService(
+        admin_repository,
+        token_repository,
+    )
+    app.dependency_overrides[get_settings_service] = lambda: settings_service
+    app.state.maintenance_settings_provider = settings_service.get_settings
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+    app.state.maintenance_settings_provider = default_maintenance_settings

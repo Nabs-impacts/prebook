@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from typing import TypedDict
+from typing import Any, TypedDict
 from uuid import UUID, uuid4
 
 from app.core.security import hash_password
@@ -61,17 +61,54 @@ class InMemoryAdminRepository:
         action: AdminAuditAction,
         target_id: UUID | None,
         ip: str | None,
+        *,
+        target_key: str | None = None,
+        old_value: Any = None,
+        new_value: Any = None,
     ) -> AdminAuditLog:
         audit_log = AdminAuditLog(
             admin_id=admin_id,
             action=action,
             target_id=target_id,
+            target_key=target_key,
+            old_value=old_value,
+            new_value=new_value,
             ip=ip,
         )
         audit_log.id = uuid4()
         audit_log.created_at = datetime.now(UTC)
         self.audit_logs.append(audit_log)
         return audit_log
+
+    async def commit(self) -> None:
+        return None
+
+
+class InMemorySettingsRepository:
+    def __init__(self) -> None:
+        self.values: dict[str, Any] = {}
+        self.cached: dict[str, Any] | None = None
+        self.load_count = 0
+        self.invalidate_count = 0
+
+    async def get_cached(self) -> dict[str, Any] | None:
+        if self.cached is None:
+            return None
+        return dict(self.cached)
+
+    async def cache(self, values: dict[str, Any]) -> None:
+        self.cached = dict(values)
+
+    async def invalidate(self) -> None:
+        self.invalidate_count += 1
+        self.cached = None
+
+    async def load_all(self) -> dict[str, Any]:
+        self.load_count += 1
+        return dict(self.values)
+
+    async def save(self, values: dict[str, Any]) -> None:
+        self.values.update(values)
 
     async def commit(self) -> None:
         return None

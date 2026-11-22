@@ -21,6 +21,7 @@ class AdminAuditAction(StrEnum):
     ADMIN_CREATED = "admin_created"
     ADMIN_UPDATED = "admin_updated"
     ADMIN_DELETED = "admin_deleted"
+    SETTINGS_UPDATED = "settings_updated"
 
 
 def enum_values(enum_type: type[PythonEnum]) -> list[str]:

@@ -7,7 +7,7 @@
 | 1. Structure du backend | Terminée |
 | 2. Modèles base de données | Terminée |
 | 3. Authentification et rôles | Terminée |
-| 4. Réglages du site | À faire |
+| 4. Réglages du site | Terminée |
 | 5. Catalogue et avis | À faire |
 | 6. Upload vidéo | À faire |
 | 7. Commandes et paiements | À faire |
@@ -47,7 +47,17 @@
 - CLI `python -m app.cli create-super-admin` avec email et mot de passe lus depuis `--email`/`--password` ou `SUPER_ADMIN_EMAIL`/`SUPER_ADMIN_PASSWORD`, testée sur PostgreSQL.
 - Tests pytest portés à 28 : login réussi et échoué, message générique, compte inactif, rate limiting, rotation et réutilisation des refresh tokens, logout, rôles et permissions, auto-suppression, dernier super administrateur, pagination, audit et révocation après changement de mot de passe.
 - Validation finale : `ruff check`, `ruff format --check`, `mypy app tests`, `pytest` (28 tests), `alembic check`.
+- Réglages du site stockés dans `site_settings` (JSONB) avec schéma Pydantic strict `extra="forbid"` et valeurs par défaut : `maintenance_mode`, `maintenance_message`, `show_reviews_count`, `show_purchases_count`.
+- `SettingsService` lit d'abord Redis (`settings:site`, TTL 300 s), puis charge tous les réglages en une seule requête SQL et met le résultat complet en cache. Chaque modification invalide puis réécrit le cache.
+- Les mises à jour partielles utilisent un `INSERT ... ON CONFLICT DO UPDATE` groupé et refusent les clés inconnues, les valeurs nulles et les payloads vides.
+- `GET /api/v1/public/settings` renvoie les quatre réglages publics avec `Cache-Control: public, max-age=30` et un `ETag` fort, avec réponse `304` sur `If-None-Match`.
+- `GET` et `PATCH /api/v1/admin/settings` sont protégés par `require_admin` et chaque clé modifiée crée une entrée `admin_audit_logs` avec `target_key`, `old_value` et `new_value`.
+- Migration `d7b2f4a9c1e6` ajoutant `target_key`, `old_value`, `new_value` à `admin_audit_logs` et la valeur d'enum `settings_updated`.
+- Middleware de maintenance : réponse `503` JSON avec message configurable et `Retry-After`, sauf pour `/api/v1/health`, `/api/v1/auth/*`, `/api/v1/admin/*` et `/api/v1/public/settings`. Le middleware lit les réglages via le service et le cache Redis, sans requête SQL directe.
+- Helper `SettingsService.resolve_optional_counts` pour les futurs endpoints catalogue : les compteurs désactivés renvoient `None` sans exécuter leur requête de comptage.
+- Tests pytest portés à 38 : valeurs par défaut, mise à jour partielle, clés inconnues et payload vide, cache et invalidation, ETag, maintenance et routes exemptées, droits d'accès et audit des réglages.
+- Validation finale de l'étape 4 : `ruff format`, `ruff check`, `mypy app tests`, `pytest` (38 tests), `alembic upgrade head`, `alembic downgrade -1`, `alembic upgrade head` et `alembic check`.
 
 ## Prochaine étape
 
-Étape 4 : réglages du site, avec stockage JSONB, lecture cachée dans Redis et endpoints d'administration protégés.
+Étape 5 : catalogue et avis, en réutilisant `SettingsService.resolve_optional_counts` pour masquer les compteurs désactivés.

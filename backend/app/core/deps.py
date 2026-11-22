@@ -11,10 +11,12 @@ from app.models.user import User
 from app.repositories.admin import AdminRepository
 from app.repositories.health import HealthRepository
 from app.repositories.login_attempt import LoginAttemptRepository
+from app.repositories.settings import SettingsRepository
 from app.repositories.token import TokenRepository
 from app.services.admin import AdminService
 from app.services.auth import AuthService, ensure_admin, ensure_super_admin
 from app.services.health import HealthService
+from app.services.settings import SettingsService
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
@@ -55,6 +57,17 @@ def get_admin_service(
     return AdminService(admin_repository, token_repository)
 
 
+def get_settings_repository(session: DbSession, redis: RedisClient) -> SettingsRepository:
+    return SettingsRepository(session, redis)
+
+
+def get_settings_service(
+    settings_repository: Annotated[SettingsRepository, Depends(get_settings_repository)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+) -> SettingsService:
+    return SettingsService(settings_repository, admin_repository)
+
+
 def get_optional_access_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
 ) -> str | None:
@@ -87,6 +100,7 @@ async def require_super_admin(
 HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 AdminServiceDep = Annotated[AdminService, Depends(get_admin_service)]
+SettingsServiceDep = Annotated[SettingsService, Depends(get_settings_service)]
 RequireAdminDep = Annotated[User, Depends(require_admin)]
 RequireSuperAdminDep = Annotated[User, Depends(require_super_admin)]
 OptionalAccessTokenDep = Annotated[str | None, Depends(get_optional_access_token)]

@@ -9,8 +9,10 @@ from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.maintenance import MaintenanceMiddleware
 from app.core.middleware import RequestIDMiddleware, RequestLoggingMiddleware
 from app.db.session import close_redis, dispose_engine
+from app.services.settings import load_maintenance_settings
 
 
 def create_app() -> FastAPI:
@@ -33,7 +35,9 @@ def create_app() -> FastAPI:
         openapi_url=None if is_production else "/openapi.json",
     )
 
+    app.state.maintenance_settings_provider = load_maintenance_settings
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(MaintenanceMiddleware)
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(
         CORSMiddleware,

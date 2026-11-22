@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -68,11 +69,18 @@ class AdminRepository:
         action: AdminAuditAction,
         target_id: UUID | None,
         ip: str | None,
+        *,
+        target_key: str | None = None,
+        old_value: Any = None,
+        new_value: Any = None,
     ) -> AdminAuditLog:
         audit_log = AdminAuditLog(
             admin_id=admin_id,
             action=action,
             target_id=target_id,
+            target_key=target_key,
+            old_value=old_value,
+            new_value=new_value,
             ip=ip,
         )
         self._session.add(audit_log)
