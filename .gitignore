@@ -58,3 +58,6 @@ htmlcov/
 # --- OS ---
 .DS_Store
 Thumbs.db
+
+# --- Stockage local des fichiers ---
+storage/

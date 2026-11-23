@@ -16,6 +16,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - storage_data:/app/storage
     restart: unless-stopped
 
   postgres:
@@ -52,3 +54,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  storage_data:

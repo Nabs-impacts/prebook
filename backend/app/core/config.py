@@ -34,7 +34,21 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_TTL_DAYS: int = Field(default=7, ge=1)
     LOGIN_RATE_LIMIT_ATTEMPTS: int = Field(default=5, ge=1)
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = Field(default=60, ge=1)
+    REVIEW_RATE_LIMIT_ATTEMPTS: int = Field(default=3, ge=1)
+    REVIEW_RATE_LIMIT_WINDOW_SECONDS: int = Field(default=3600, ge=1)
     PASSWORD_MIN_LENGTH: int = Field(default=8, ge=8)
+    STORAGE_ROOT: Path = Path("storage")
+    STORAGE_PUBLIC_URL: str = "/media"
+    MAX_PDF_UPLOAD_BYTES: int = Field(default=50 * 1024 * 1024, ge=1)
+    MAX_COVER_UPLOAD_BYTES: int = Field(default=5 * 1024 * 1024, ge=1)
+
+    @property
+    def storage_private_dir(self) -> Path:
+        return (self.STORAGE_ROOT / "private").resolve()
+
+    @property
+    def storage_public_dir(self) -> Path:
+        return (self.STORAGE_ROOT / "public").resolve()
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

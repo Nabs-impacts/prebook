@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.api.v1.router import api_router
@@ -13,6 +14,7 @@ from app.core.maintenance import MaintenanceMiddleware
 from app.core.middleware import RequestIDMiddleware, RequestLoggingMiddleware
 from app.db.session import close_redis, dispose_engine
 from app.services.settings import load_maintenance_settings
+from app.services.storage import get_storage_backend
 
 
 def create_app() -> FastAPI:
@@ -50,6 +52,12 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(api_router, prefix="/api/v1")
+    get_storage_backend()
+    app.mount(
+        settings.STORAGE_PUBLIC_URL,
+        StaticFiles(directory=settings.storage_public_dir),
+        name="media",
+    )
     return app
 
 

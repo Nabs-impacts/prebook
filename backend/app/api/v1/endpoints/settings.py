@@ -1,8 +1,7 @@
-import hashlib
-
 from fastapi import APIRouter, Request, Response
 
 from app.core.deps import RequireAdminDep, SettingsServiceDep
+from app.core.http import conditional_json_response
 from app.core.request import client_ip
 from app.schemas.settings import SiteSettings, SiteSettingsUpdate
 
@@ -12,20 +11,14 @@ public_router = APIRouter(prefix="/public/settings")
 admin_router = APIRouter(prefix="/admin/settings")
 
 
-def build_etag(body: str) -> str:
-    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    return f'"{digest}"'
-
-
 @public_router.get("", response_model=SiteSettings)
 async def read_public_settings(request: Request, service: SettingsServiceDep) -> Response:
     settings = await service.get_settings()
-    body = settings.model_dump_json()
-    etag = build_etag(body)
-    headers = {"Cache-Control": PUBLIC_CACHE_CONTROL, "ETag": etag}
-    if request.headers.get("if-none-match") == etag:
-        return Response(status_code=304, headers=headers)
-    return Response(content=body, media_type="application/json", headers=headers)
+    return conditional_json_response(
+        request,
+        settings.model_dump_json(),
+        PUBLIC_CACHE_CONTROL,
+    )
 
 
 @admin_router.get("", response_model=SiteSettings)

@@ -30,6 +30,7 @@ class Order(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     __table_args__ = (
         Index("ix_orders_user_id_created_at", "user_id", "created_at"),
         Index("ix_orders_ebook_id_created_at", "ebook_id", "created_at"),
+        Index("ix_orders_ebook_id_status", "ebook_id", "status"),
         Index("ix_orders_status_created_at", "status", "created_at"),
         Index("ix_orders_buyer_email", "buyer_email"),
         Index("ix_orders_paid_at", "paid_at"),

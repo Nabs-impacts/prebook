@@ -30,6 +30,8 @@ COPY --chown=prebook:prebook app ./app
 COPY --chown=prebook:prebook alembic ./alembic
 COPY --chown=prebook:prebook alembic.ini ./
 
+RUN mkdir -p /app/storage && chown -R prebook:prebook /app/storage
+
 USER prebook
 
 EXPOSE 8000

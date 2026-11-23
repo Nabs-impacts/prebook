@@ -8,7 +8,7 @@
 | 2. Modèles base de données | Terminée |
 | 3. Authentification et rôles | Terminée |
 | 4. Réglages du site | Terminée |
-| 5. Catalogue et avis | À faire |
+| 5. Catalogue et avis | Terminée |
 | 6. Upload vidéo | À faire |
 | 7. Commandes et paiements | À faire |
 | 8. Tatouage PDF et téléchargement sécurisé | À faire |
@@ -57,7 +57,20 @@
 - Helper `SettingsService.resolve_optional_counts` pour les futurs endpoints catalogue : les compteurs désactivés renvoient `None` sans exécuter leur requête de comptage.
 - Tests pytest portés à 38 : valeurs par défaut, mise à jour partielle, clés inconnues et payload vide, cache et invalidation, ETag, maintenance et routes exemptées, droits d'accès et audit des réglages.
 - Validation finale de l'étape 4 : `ruff format`, `ruff check`, `mypy app tests`, `pytest` (38 tests), `alembic upgrade head`, `alembic downgrade -1`, `alembic upgrade head` et `alembic check`.
+- Catalogue public exposé sous `/api/v1/ebooks` : liste paginée avec champs légers (`summary`), détail complet avec note moyenne calculée par sous-requête SQL agrégée, et avis approuvés paginés.
+- Colonnes `summary` et `deleted_at` ajoutées à `ebooks`, avec index `ix_ebooks_is_published_deleted_at_created_at` et `ix_orders_ebook_id_status` via la migration `e5c1a7b3d902`.
+- Slug généré automatiquement à la création à partir du titre, translittéré en ASCII et rendu unique par suffixe numérique ; il reste stable lors d'une modification de titre pour préserver les URLs.
+- Les compteurs `reviews_count` et `purchases_count` passent par `resolve_optional_counts` : désactivés, ils valent `null` sans aucune requête de comptage. Pour les listes, les compteurs manquants sont calculés par agrégation groupée `IN (...)` puis mis en cache, ce qui évite tout N+1.
+- Compteurs stockés séparément dans Redis par ebook (`catalog:counter:reviews:*`, `catalog:counter:purchases:*`, TTL 600 s) et invalidés lors de l'approbation ou de la suppression d'un avis, avec un hook `on_order_paid` prêt pour l'étape commandes.
+- Réponses publiques de liste, détail et avis mises en cache Redis avec version de catalogue (`catalog:version`) incrémentée à chaque modification admin, approbation ou suppression d'avis. Les clés incluent les drapeaux d'affichage des compteurs.
+- `ETag` fort et `Cache-Control: public, max-age=60` sur les GET publics, avec `304` sur `If-None-Match`. `SettingsService.resolve_optional_counts` accepte désormais des réglages déjà chargés pour éviter des lectures Redis répétées.
+- Avis publics créés avec `is_approved = false`, validation stricte Pydantic, suppression itérative des balises HTML et échappement des caractères restants. Rate limiting Redis par IP (`3` dépôts par heure par défaut, configurables).
+- Administration du catalogue sous `/api/v1/admin/ebooks` : création, modification, publication, dépublication et suppression. La publication exige une couverture et un PDF ; la suppression est logique si des commandes existent.
+- Interface `StorageBackend` avec implémentation `LocalStorageBackend` : PDF dans un dossier privé non monté, couvertures dans un dossier public servi sous `/media`. Ajout de `python-multipart`, d'un volume Docker `storage_data` et des limites de taille configurables.
+- Modération sous `/api/v1/admin/reviews` : liste filtrée `pending`/`approved`/`all`, approbation et suppression. Les changements approuvés invalident compteurs et caches publics.
+- Tests pytest portés à 50 : liste/détail, brouillon invisible, création et modération d'avis, XSS, rate limiting, compteurs actifs/désactivés sans requête, cache et invalidation, droits admin, slugs uniques, uploads, suppression logique et pagination.
+- Validation finale de l'étape 5 : `ruff check`, `ruff format --check`, `mypy app tests`, `pytest` (50 tests), `alembic upgrade head` et `alembic check` sur PostgreSQL temporaire. Les plans `EXPLAIN` confirment l'usage des index de catalogue, d'avis approuvés et de commandes payées.
 
 ## Prochaine étape
 
-Étape 5 : catalogue et avis, en réutilisant `SettingsService.resolve_optional_counts` pour masquer les compteurs désactivés.
+Étape 6 : upload vidéo, avec branchement de Cloudflare R2 ou Stream derrière l'interface de stockage existante.

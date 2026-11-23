@@ -74,10 +74,12 @@ class SettingsService:
         self,
         review_counter: Callable[[], Awaitable[int]],
         purchase_counter: Callable[[], Awaitable[int]],
+        *,
+        settings: SiteSettings | None = None,
     ) -> OptionalCounts:
-        settings = await self.get_settings()
-        reviews_count = await review_counter() if settings.show_reviews_count else None
-        purchases_count = await purchase_counter() if settings.show_purchases_count else None
+        current = settings if settings is not None else await self.get_settings()
+        reviews_count = await review_counter() if current.show_reviews_count else None
+        purchases_count = await purchase_counter() if current.show_purchases_count else None
         return OptionalCounts(
             reviews_count=reviews_count,
             purchases_count=purchases_count,
