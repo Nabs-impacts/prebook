@@ -5,6 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.errors import UnauthorizedError
 from app.db.session import get_redis_client, get_session
 from app.models.user import User
@@ -18,12 +19,15 @@ from app.repositories.review import ReviewRepository
 from app.repositories.review_rate_limit import ReviewRateLimitRepository
 from app.repositories.settings import SettingsRepository
 from app.repositories.token import TokenRepository
+from app.repositories.video import VideoRepository
 from app.services.admin import AdminService
 from app.services.auth import AuthService, ensure_admin, ensure_super_admin
 from app.services.ebook import EbookService
 from app.services.health import HealthService
 from app.services.settings import SettingsService
 from app.services.storage import StorageBackend, get_storage_backend
+from app.services.video import VideoService
+from app.services.video_provider import CloudflareStreamProvider, ExternalUrlProvider
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
@@ -79,6 +83,10 @@ def get_ebook_repository(session: DbSession) -> EbookRepository:
     return EbookRepository(session)
 
 
+def get_video_repository(session: DbSession) -> VideoRepository:
+    return VideoRepository(session)
+
+
 def get_review_repository(session: DbSession) -> ReviewRepository:
     return ReviewRepository(session)
 
@@ -105,6 +113,7 @@ def get_ebook_service(
     ],
     settings_service: Annotated[SettingsService, Depends(get_settings_service)],
     storage_backend: Annotated[StorageBackend, Depends(get_storage_backend)],
+    video_repository: Annotated[VideoRepository, Depends(get_video_repository)],
 ) -> EbookService:
     return EbookService(
         ebook_repository,
@@ -114,6 +123,41 @@ def get_ebook_service(
         rate_limit_repository,
         settings_service,
         storage_backend,
+        video_repository,
+    )
+
+
+def get_cloudflare_stream_provider() -> CloudflareStreamProvider:
+    settings = get_settings()
+    return CloudflareStreamProvider(
+        settings.CLOUDFLARE_ACCOUNT_ID or "",
+        settings.CLOUDFLARE_STREAM_API_TOKEN or "",
+    )
+
+
+def get_external_url_provider() -> ExternalUrlProvider:
+    return ExternalUrlProvider()
+
+
+def get_video_service(
+    video_repository: Annotated[VideoRepository, Depends(get_video_repository)],
+    ebook_repository: Annotated[EbookRepository, Depends(get_ebook_repository)],
+    cache_repository: Annotated[CatalogCacheRepository, Depends(get_catalog_cache_repository)],
+    cloudflare_provider: Annotated[
+        CloudflareStreamProvider, Depends(get_cloudflare_stream_provider)
+    ],
+    external_provider: Annotated[ExternalUrlProvider, Depends(get_external_url_provider)],
+) -> VideoService:
+    settings = get_settings()
+    return VideoService(
+        video_repository,
+        ebook_repository,
+        cache_repository,
+        cloudflare_provider,
+        external_provider,
+        max_duration_seconds=settings.VIDEO_MAX_DURATION_SECONDS,
+        max_size_bytes=settings.VIDEO_MAX_SIZE_BYTES,
+        webhook_secret=settings.CLOUDFLARE_STREAM_WEBHOOK_SECRET,
     )
 
 
@@ -151,6 +195,7 @@ AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 AdminServiceDep = Annotated[AdminService, Depends(get_admin_service)]
 SettingsServiceDep = Annotated[SettingsService, Depends(get_settings_service)]
 EbookServiceDep = Annotated[EbookService, Depends(get_ebook_service)]
+VideoServiceDep = Annotated[VideoService, Depends(get_video_service)]
 RequireAdminDep = Annotated[User, Depends(require_admin)]
 RequireSuperAdminDep = Annotated[User, Depends(require_super_admin)]
 OptionalAccessTokenDep = Annotated[str | None, Depends(get_optional_access_token)]

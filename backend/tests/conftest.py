@@ -22,6 +22,7 @@ from app.core.deps import (
     get_auth_service,
     get_ebook_service,
     get_settings_service,
+    get_video_service,
 )
 from app.main import create_app
 from app.repositories.admin import AdminRepository
@@ -33,12 +34,15 @@ from app.repositories.review import ReviewRepository
 from app.repositories.review_rate_limit import ReviewRateLimitRepository
 from app.repositories.settings import SettingsRepository
 from app.repositories.token import TokenRepository
+from app.repositories.video import VideoRepository
 from app.schemas.settings import SiteSettings
 from app.services.admin import AdminService
 from app.services.auth import AuthService
 from app.services.ebook import EbookService
 from app.services.settings import SettingsService
 from app.services.storage import LocalStorageBackend
+from app.services.video import VideoService
+from app.services.video_provider import ExternalUrlProvider
 
 from tests.support import InMemoryAdminRepository, InMemorySettingsRepository
 from tests.support_catalog import (
@@ -46,6 +50,9 @@ from tests.support_catalog import (
     InMemoryOrderRepository,
     InMemoryReviewRepository,
 )
+from tests.support_video import FakeCloudflareStreamProvider, InMemoryVideoRepository
+
+TEST_WEBHOOK_SECRET = "test-webhook-secret"
 
 
 async def default_maintenance_settings() -> SiteSettings:
@@ -158,6 +165,23 @@ def ebook_repository(
 
 
 @pytest.fixture
+def video_repository(
+    ebook_repository: InMemoryEbookRepository,
+) -> InMemoryVideoRepository:
+    return InMemoryVideoRepository(lambda ebook_id: ebook_repository.ebooks.get(ebook_id))
+
+
+@pytest.fixture
+def cloudflare_provider() -> FakeCloudflareStreamProvider:
+    return FakeCloudflareStreamProvider()
+
+
+@pytest.fixture
+def external_provider() -> ExternalUrlProvider:
+    return ExternalUrlProvider()
+
+
+@pytest.fixture
 def order_repository() -> InMemoryOrderRepository:
     return InMemoryOrderRepository()
 
@@ -180,6 +204,7 @@ async def catalog_service(
     review_repository: InMemoryReviewRepository,
     order_repository: InMemoryOrderRepository,
     storage_backend: LocalStorageBackend,
+    video_repository: InMemoryVideoRepository,
 ) -> EbookService:
     settings_service = SettingsService(
         cast(SettingsRepository, settings_repository),
@@ -193,6 +218,27 @@ async def catalog_service(
         ReviewRateLimitRepository(cast(Redis, fake_redis)),
         settings_service,
         storage_backend,
+        cast(VideoRepository, video_repository),
+    )
+
+
+@pytest.fixture
+def video_service(
+    ebook_repository: InMemoryEbookRepository,
+    video_repository: InMemoryVideoRepository,
+    fake_redis: FakeRedis,
+    cloudflare_provider: FakeCloudflareStreamProvider,
+    external_provider: ExternalUrlProvider,
+) -> VideoService:
+    return VideoService(
+        cast(VideoRepository, video_repository),
+        cast(EbookRepository, ebook_repository),
+        CatalogCacheRepository(cast(Redis, fake_redis)),
+        cloudflare_provider,
+        external_provider,
+        max_duration_seconds=600,
+        max_size_bytes=500 * 1024 * 1024,
+        webhook_secret=TEST_WEBHOOK_SECRET,
     )
 
 
@@ -203,6 +249,7 @@ async def catalog_client(
     settings_repository: InMemorySettingsRepository,
     fake_redis: FakeRedis,
     catalog_service: EbookService,
+    video_service: VideoService,
 ) -> AsyncIterator[AsyncClient]:
     admin_repository = cast(AdminRepository, repository)
     token_repository = TokenRepository(cast(Redis, fake_redis))
@@ -223,6 +270,7 @@ async def catalog_client(
     )
     app.dependency_overrides[get_settings_service] = lambda: settings_service
     app.dependency_overrides[get_ebook_service] = lambda: catalog_service
+    app.dependency_overrides[get_video_service] = lambda: video_service
     app.state.maintenance_settings_provider = settings_service.get_settings
 
     transport = ASGITransport(app=app)

@@ -1,7 +1,18 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
+from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Index, Integer, String, Text, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -10,6 +21,7 @@ from app.models.mixins import CreatedAtMixin, UUIDPrimaryKeyMixin
 if TYPE_CHECKING:
     from app.models.order import Order
     from app.models.review import Review
+    from app.models.video import Video
 
 
 class Ebook(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
@@ -38,7 +50,10 @@ class Ebook(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     price: Mapped[int] = mapped_column(Integer, nullable=False)
     cover_url: Mapped[str] = mapped_column(String(1024), nullable=False)
     pdf_storage_key: Mapped[str] = mapped_column(String(1024), nullable=False)
-    preview_video_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    preview_video_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("videos.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+    )
     is_published: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -53,4 +68,16 @@ class Ebook(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
         lazy="raise",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    videos: Mapped[list["Video"]] = relationship(
+        back_populates="ebook",
+        foreign_keys="Video.ebook_id",
+        lazy="raise",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    preview_video: Mapped["Video | None"] = relationship(
+        foreign_keys=[preview_video_id],
+        lazy="raise",
+        post_update=True,
     )

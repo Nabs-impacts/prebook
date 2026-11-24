@@ -39,8 +39,20 @@ class Settings(BaseSettings):
     PASSWORD_MIN_LENGTH: int = Field(default=8, ge=8)
     STORAGE_ROOT: Path = Path("storage")
     STORAGE_PUBLIC_URL: str = "/media"
+    STORAGE_BACKEND: Literal["local", "r2"] = "local"
     MAX_PDF_UPLOAD_BYTES: int = Field(default=50 * 1024 * 1024, ge=1)
     MAX_COVER_UPLOAD_BYTES: int = Field(default=5 * 1024 * 1024, ge=1)
+    R2_ACCOUNT_ID: str | None = None
+    R2_ACCESS_KEY_ID: str | None = None
+    R2_SECRET_ACCESS_KEY: str | None = None
+    R2_BUCKET: str | None = None
+    R2_PUBLIC_BASE_URL: str | None = None
+    PRESIGNED_URL_TTL_SECONDS: int = Field(default=300, ge=1)
+    CLOUDFLARE_ACCOUNT_ID: str | None = None
+    CLOUDFLARE_STREAM_API_TOKEN: str | None = None
+    CLOUDFLARE_STREAM_WEBHOOK_SECRET: str | None = None
+    VIDEO_MAX_DURATION_SECONDS: int = Field(default=600, ge=1)
+    VIDEO_MAX_SIZE_BYTES: int = Field(default=500 * 1024 * 1024, ge=1)
 
     @property
     def storage_private_dir(self) -> Path:

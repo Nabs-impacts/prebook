@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.text import sanitize_text
+from app.schemas.video import EbookVideo
 
 MAX_SUMMARY_LENGTH = 500
 MAX_DESCRIPTION_LENGTH = 50000
@@ -17,9 +18,8 @@ class EbookCreate(BaseModel):
     description: str = Field(min_length=1, max_length=MAX_DESCRIPTION_LENGTH)
     summary: str | None = Field(default=None, max_length=MAX_SUMMARY_LENGTH)
     price: int = Field(ge=0)
-    preview_video_id: str | None = Field(default=None, max_length=255)
 
-    @field_validator("title", "description", "summary", "preview_video_id")
+    @field_validator("title", "description", "summary")
     @classmethod
     def strip_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -38,10 +38,9 @@ class EbookUpdate(BaseModel):
     )
     summary: str | None = Field(default=None, max_length=MAX_SUMMARY_LENGTH)
     price: int | None = Field(default=None, ge=0)
-    preview_video_id: str | None = Field(default=None, max_length=255)
     is_published: bool | None = None
 
-    @field_validator("title", "description", "summary", "preview_video_id")
+    @field_validator("title", "description", "summary")
     @classmethod
     def strip_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -82,7 +81,8 @@ class EbookDetail(BaseModel):
     summary: str
     price: int
     cover_url: str
-    preview_video_id: str | None
+    preview_video_id: UUID | None
+    video: EbookVideo | None
     average_rating: float | None
     reviews_count: int | None = None
     purchases_count: int | None = None
@@ -97,7 +97,7 @@ class AdminEbookRead(BaseModel):
     price: int
     cover_url: str
     has_pdf: bool
-    preview_video_id: str | None
+    preview_video_id: UUID | None
     is_published: bool
     deleted_at: datetime | None
     created_at: datetime

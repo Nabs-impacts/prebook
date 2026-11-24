@@ -15,6 +15,18 @@ class OrderStatus(StrEnum):
     REFUNDED = "refunded"
 
 
+class VideoProviderType(StrEnum):
+    CLOUDFLARE_STREAM = "cloudflare_stream"
+    EXTERNAL_URL = "external_url"
+
+
+class VideoStatus(StrEnum):
+    UPLOADING = "uploading"
+    PROCESSING = "processing"
+    READY = "ready"
+    FAILED = "failed"
+
+
 class AdminAuditAction(StrEnum):
     LOGIN = "login"
     LOGIN_FAILED = "login_failed"

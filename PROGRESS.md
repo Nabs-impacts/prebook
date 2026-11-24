@@ -9,7 +9,7 @@
 | 3. Authentification et rôles | Terminée |
 | 4. Réglages du site | Terminée |
 | 5. Catalogue et avis | Terminée |
-| 6. Upload vidéo | À faire |
+| 6. Upload vidéo | Terminée |
 | 7. Commandes et paiements | À faire |
 | 8. Tatouage PDF et téléchargement sécurisé | À faire |
 | 9. Statistiques admin | À faire |
@@ -71,6 +71,17 @@
 - Tests pytest portés à 50 : liste/détail, brouillon invisible, création et modération d'avis, XSS, rate limiting, compteurs actifs/désactivés sans requête, cache et invalidation, droits admin, slugs uniques, uploads, suppression logique et pagination.
 - Validation finale de l'étape 5 : `ruff check`, `ruff format --check`, `mypy app tests`, `pytest` (50 tests), `alembic upgrade head` et `alembic check` sur PostgreSQL temporaire. Les plans `EXPLAIN` confirment l'usage des index de catalogue, d'avis approuvés et de commandes payées.
 
+- Stockage R2 ajouté via `aioboto3` : `R2StorageBackend` expose l'API S3 compatible, est sélectionné par `STORAGE_BACKEND=local|r2` et conserve les PDF privés. Les couvertures utilisent `R2_PUBLIC_BASE_URL`, les PDF passent par une URL présignée de courte durée (`PRESIGNED_URL_TTL_SECONDS`, 300 s par défaut).
+- Variables R2 et Cloudflare Stream ajoutées à la configuration et à `.env.example`, avec limites d'upload vidéo configurables (`VIDEO_MAX_DURATION_SECONDS`, `VIDEO_MAX_SIZE_BYTES`).
+- Modèle `Video` avec enums natifs `video_provider` et `video_status`, index sur `ebook_id`, `(provider, provider_video_id)` et `status`. `Ebook.preview_video_id` devient une clé étrangère UUID vers `videos.id` avec `ON DELETE SET NULL`, ce qui garantit au plus une vidéo active par ebook.
+- Migration `f8a2c4d6e910` appliquée, testée en upgrade, downgrade puis upgrade sur PostgreSQL temporaire et validée par `alembic check`.
+- Interface `VideoProvider` avec `CloudflareStreamProvider` (httpx async, direct creator upload, synchronisation, suppression) et `ExternalUrlProvider` (validation YouTube/Vimeo et génération du lien embed).
+- Endpoints admin : création d'URL d'upload direct, attachement d'une vidéo externe, synchronisation manuelle du statut et détachement avec suppression distante. Le remplacement conserve l'ancienne vidéo active jusqu'à ce que la nouvelle soit `ready`, puis bascule le pointeur et supprime l'ancienne.
+- Webhook `POST /api/v1/webhooks/cloudflare-stream` avec vérification HMAC SHA-256 du header `Webhook-Signature`, mise à jour du statut, de la durée, de la miniature et du flux HLS, invalidation du cache catalogue et exemption du mode maintenance. Le traitement est idempotent, y compris pour les rejeux et les vidéos inconnues.
+- Le détail public renvoie un objet `video` (`provider`, `hls_url`, `thumbnail_url`, `duration_seconds`, `embed_url`) uniquement lorsque le statut est `ready`, sans aucun appel Cloudflare : tout provient de PostgreSQL et du cache Redis.
+- Tests pytest portés à 63 : upload direct, webhook valide/invalide/rejoué, exemption maintenance, refresh, remplacement, suppression distante, vidéos externes valides et invalides, visibilité publique selon le statut, droits admin et backend R2 mocké (upload, suppression, URL présignée, sélection).
+- Validation finale de l'étape 6 : `ruff format --check`, `ruff check`, `mypy app tests`, `pytest` (63 tests), migrations sur PostgreSQL temporaire et aller-retour ORM `Ebook`/`Video`.
+
 ## Prochaine étape
 
-Étape 6 : upload vidéo, avec branchement de Cloudflare R2 ou Stream derrière l'interface de stockage existante.
+Étape 7 : commandes et paiements derrière l'interface `PaymentProvider`.

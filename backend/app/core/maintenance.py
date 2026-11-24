@@ -17,6 +17,7 @@ EXEMPT_PREFIXES = (
     "/api/v1/auth",
     "/api/v1/admin",
     "/api/v1/public/settings",
+    "/api/v1/webhooks",
 )
 
 SettingsProvider = Callable[[], Awaitable[SiteSettings]]

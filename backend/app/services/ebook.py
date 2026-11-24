@@ -13,6 +13,7 @@ from app.repositories.ebook import EbookRepository
 from app.repositories.order import OrderRepository
 from app.repositories.review import REVIEW_FILTERS, ReviewRepository
 from app.repositories.review_rate_limit import ReviewRateLimitRepository
+from app.repositories.video import VideoRepository
 from app.schemas.ebook import (
     AdminEbookListResponse,
     AdminEbookRead,
@@ -30,6 +31,7 @@ from app.schemas.ebook import (
 from app.schemas.settings import SiteSettings
 from app.services.settings import SettingsService
 from app.services.storage import StorageBackend
+from app.services.video import build_public_video
 
 PDF_MAGIC = b"%PDF-"
 PDF_EXTENSION = ".pdf"
@@ -73,6 +75,7 @@ class EbookService:
         rate_limit_repository: ReviewRateLimitRepository,
         settings_service: SettingsService,
         storage_backend: StorageBackend,
+        video_repository: VideoRepository,
     ) -> None:
         self._ebook_repository = ebook_repository
         self._review_repository = review_repository
@@ -81,6 +84,7 @@ class EbookService:
         self._rate_limit_repository = rate_limit_repository
         self._settings_service = settings_service
         self._storage_backend = storage_backend
+        self._video_repository = video_repository
 
     async def list_public_ebooks(self, page: int, page_size: int) -> EbookListResponse:
         settings = await self._settings_service.get_settings()
@@ -154,6 +158,7 @@ class EbookService:
             lambda: self._purchase_count(ebook.id),
             settings=settings,
         )
+        video = await self._video_repository.get_active_for_ebook(ebook.id)
         detail = EbookDetail(
             id=ebook.id,
             title=ebook.title,
@@ -163,6 +168,7 @@ class EbookService:
             price=ebook.price,
             cover_url=ebook.cover_url,
             preview_video_id=ebook.preview_video_id,
+            video=build_public_video(video),
             average_rating=round(average_rating, 2) if average_rating is not None else None,
             reviews_count=counts.reviews_count,
             purchases_count=counts.purchases_count,
@@ -246,7 +252,6 @@ class EbookService:
             price=data.price,
             cover_url="",
             pdf_storage_key="",
-            preview_video_id=data.preview_video_id,
             is_published=False,
         )
         created = await self._ebook_repository.create(ebook)
@@ -265,8 +270,6 @@ class EbookService:
             ebook.description = data.description
         if data.price is not None:
             ebook.price = data.price
-        if "preview_video_id" in data.model_fields_set:
-            ebook.preview_video_id = data.preview_video_id
         if data.summary is not None:
             ebook.summary = data.summary or derive_summary(ebook.description)
         if data.is_published is not None:
