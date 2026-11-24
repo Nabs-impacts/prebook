@@ -10,6 +10,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -34,7 +35,9 @@ class Order(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
         Index("ix_orders_status_created_at", "status", "created_at"),
         Index("ix_orders_buyer_email", "buyer_email"),
         Index("ix_orders_paid_at", "paid_at"),
+        Index("ix_orders_payment_method_created_at", "payment_method", "created_at"),
         UniqueConstraint("provider", "provider_reference", name="uq_orders_provider_reference"),
+        UniqueConstraint("idempotency_key", name="uq_orders_idempotency_key"),
         CheckConstraint("amount >= 0", name="amount_non_negative"),
     )
 
@@ -68,6 +71,10 @@ class Order(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     )
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     provider_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payment_method: Mapped[str] = mapped_column(String(50), nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payment_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    payment_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User | None"] = relationship(back_populates="orders", lazy="raise")

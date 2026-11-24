@@ -10,7 +10,7 @@
 | 4. Réglages du site | Terminée |
 | 5. Catalogue et avis | Terminée |
 | 6. Upload vidéo | Terminée |
-| 7. Commandes et paiements | À faire |
+| 7. Commandes et paiements | Terminée |
 | 8. Tatouage PDF et téléchargement sécurisé | À faire |
 | 9. Statistiques admin | À faire |
 | 10. Optimisation et tests | À faire |
@@ -82,6 +82,30 @@
 - Tests pytest portés à 63 : upload direct, webhook valide/invalide/rejoué, exemption maintenance, refresh, remplacement, suppression distante, vidéos externes valides et invalides, visibilité publique selon le statut, droits admin et backend R2 mocké (upload, suppression, URL présignée, sélection).
 - Validation finale de l'étape 6 : `ruff format --check`, `ruff check`, `mypy app tests`, `pytest` (63 tests), migrations sur PostgreSQL temporaire et aller-retour ORM `Ebook`/`Video`.
 
+- Interface `PaymentProvider` (`create_payment`, `get_status`, `verify_webhook`, `extract_reference`), registre par code et `FakePaymentProvider` simulable (succès, échec, attente, remboursement) pour le développement et les tests. `IPayMoneyProvider` vérifie le webhook par comparaison constante du header statique `Secret-Hash` et extrait `data.reference`, conformément à `docs/ipay-money.md`.
+- Table de correspondance `PAYMENT_METHOD_PROVIDERS` en configuration : `mynita`, `amanata`, `airtel_money` vers `ipay_money`, plus `fake` vers `fake`. Ajouter un provider ne demande que la classe, son enregistrement dans le registre et une ligne de correspondance.
+- Méthodes `payment_mynita_enabled`, `payment_amanata_enabled`, `payment_airtel_money_enabled` ajoutées aux `SiteSettings` et donc activables ou désactivables une par une. Le provider `fake` reste piloté par `PAYMENT_FAKE_ENABLED` et est interdit en production.
+- Commandes sans compte : `POST /api/v1/orders` avec prix lu exclusivement depuis `ebooks.price`, devise XOF en entiers, rate limiting Redis par IP, header `Idempotency-Key` avec contrainte unique en base, validation Pydantic stricte. `GET /api/v1/orders/{public_id}/status` expose uniquement l'identifiant UUID, le statut, le montant, la devise, la méthode et les dates.
+- Webhook `POST /api/v1/webhooks/payments/{provider}` : vérification du secret, puis re-interrogation systématique de `get_status` avant toute transition. Un payload qui ment n'a aucun effet. Traitement idempotent, référence inconnue ignorée sans erreur, route exemptée du mode maintenance par le préfixe `/api/v1/webhooks`.
+- Machine d'états stricte `pending -> paid/failed`, `paid -> refunded`; toute autre transition renvoie `409`. Le passage à `paid` renseigne `paid_at`, invalide les compteurs et le cache catalogue, puis enqueue `fulfill_order`. Un remboursement invalide également les compteurs.
+- Tâches ARQ : `fulfill_order` (stub pour l'étape 8), expiration des commandes `pending` de plus de `ORDER_PENDING_EXPIRATION_MINUTES` après une dernière consultation du provider, et réconciliation périodique des commandes `pending` de plus de `ORDER_RECONCILIATION_MINUTES`. Planification via `cron_jobs` du worker.
+- Administration des commandes sous `/api/v1/admin/orders` protégée par `require_admin`, avec pagination et filtres statut, ebook (id ou slug), dates, méthode de paiement et recherche par email, plus le détail enrichi du titre et du slug de l'ebook via jointure unique.
+- Migration `b2c3d4e5f6a7` ajoutant `payment_method`, `idempotency_key`, `payment_url`, `payment_instructions`, la contrainte d'unicité d'idempotence et l'index `(payment_method, created_at)`, validée par `alembic upgrade`, `alembic check`, `alembic downgrade -1` puis `alembic upgrade`.
+- Tests pytest portés à 84 : création de commande, prix client falsifié refusé, ebook inconnu, idempotence, webhook valide/invalide/rejoué/mensonger, transitions illégales, remboursement, expiration avec confirmation provider, réconciliation, méthode désactivée ou inconnue, rate limiting, droits admin et filtres, vérification `Secret-Hash` iPay.
+- Validation finale de l'étape 7 : `ruff format --check`, `ruff check`, `mypy app tests`, `pytest` (84 tests) et migrations sur PostgreSQL local.
+
+## Points à clarifier avec iPay Money
+
+`docs/ipay-money.md` ne documente que les webhooks. Les opérations de création et de consultation de transaction sont volontairement bloquées par `ServiceUnavailableError` plutôt que devinées. À clarifier auprès de iPay Money :
+
+- URL et méthode HTTP exactes de création d'un paiement, schéma de requête (montant entier XOF, devise, référence externe, méthode, URL de retour) et authentification (clés publique/privée, signature ou Bearer).
+- Format exact de la réponse de création : référence provider, URL de redirection, instructions de paiement, expiration éventuelle.
+- URL et méthode HTTP exactes de l'endpoint « Consulter une transaction », authentification, et correspondance officielle des statuts `initiated`, `pending`, `succeeded`, `failed`, `refunded`.
+- URL de base sandbox et live distinctes, ainsi que les domaines exacts à configurer dans `IPAY_MONEY_BASE_URL` et `IPAY_MONEY_ENV`.
+- Codes exacts attendus pour `payment_method` côté iPay (`mynita`, `amanata`, `airtel_money` ou autres identifiants) et correspondance avec nos méthodes métier.
+- Confirmation que `Secret-Hash` est bien un secret partagé statique sans signature HMAC ni timestamp, comme indiqué dans la documentation fournie.
+- Contrat complet des montants (`amount`, `net_amount`) et règles d'arrondi pour XOF.
+
 ## Prochaine étape
 
-Étape 7 : commandes et paiements derrière l'interface `PaymentProvider`.
+Étape 8 : tatouage PDF et téléchargement sécurisé, avec implémentation de la tâche ARQ `fulfill_order`.

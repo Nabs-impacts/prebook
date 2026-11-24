@@ -21,6 +21,7 @@ from app.core.deps import (
     get_admin_service,
     get_auth_service,
     get_ebook_service,
+    get_order_service,
     get_settings_service,
     get_video_service,
 )
@@ -30,6 +31,7 @@ from app.repositories.catalog_cache import CatalogCacheRepository
 from app.repositories.ebook import EbookRepository
 from app.repositories.login_attempt import LoginAttemptRepository
 from app.repositories.order import OrderRepository
+from app.repositories.order_rate_limit import OrderRateLimitRepository
 from app.repositories.review import ReviewRepository
 from app.repositories.review_rate_limit import ReviewRateLimitRepository
 from app.repositories.settings import SettingsRepository
@@ -39,6 +41,12 @@ from app.schemas.settings import SiteSettings
 from app.services.admin import AdminService
 from app.services.auth import AuthService
 from app.services.ebook import EbookService
+from app.services.order import OrderService
+from app.services.payment_provider import (
+    FakePaymentProvider,
+    IPayMoneyProvider,
+    PaymentProviderRegistry,
+)
 from app.services.settings import SettingsService
 from app.services.storage import LocalStorageBackend
 from app.services.video import VideoService
@@ -50,9 +58,11 @@ from tests.support_catalog import (
     InMemoryOrderRepository,
     InMemoryReviewRepository,
 )
+from tests.support_order import FakeTaskQueue
 from tests.support_video import FakeCloudflareStreamProvider, InMemoryVideoRepository
 
 TEST_WEBHOOK_SECRET = "test-webhook-secret"
+TEST_FAKE_WEBHOOK_SECRET = "test-fake-payment-secret"
 
 
 async def default_maintenance_settings() -> SiteSettings:
@@ -182,8 +192,111 @@ def external_provider() -> ExternalUrlProvider:
 
 
 @pytest.fixture
-def order_repository() -> InMemoryOrderRepository:
-    return InMemoryOrderRepository()
+def order_repository(
+    ebook_repository: InMemoryEbookRepository,
+) -> InMemoryOrderRepository:
+    return InMemoryOrderRepository(lambda ebook_id: ebook_repository.ebooks.get(ebook_id))
+
+
+@pytest.fixture
+def fake_payment_provider() -> FakePaymentProvider:
+    return FakePaymentProvider(webhook_secret=TEST_FAKE_WEBHOOK_SECRET)
+
+
+@pytest.fixture
+def payment_registry(
+    fake_payment_provider: FakePaymentProvider,
+) -> PaymentProviderRegistry:
+    return PaymentProviderRegistry(
+        {
+            "fake": fake_payment_provider,
+            "ipay_money": IPayMoneyProvider(
+                "pk_test",
+                "sk_test",
+                "https://api.i-pay.money",
+                "sandbox",
+                "ipay-webhook-secret",
+            ),
+        }
+    )
+
+
+@pytest.fixture
+def fake_task_queue() -> FakeTaskQueue:
+    return FakeTaskQueue()
+
+
+@pytest.fixture
+def order_service(
+    order_repository: InMemoryOrderRepository,
+    ebook_repository: InMemoryEbookRepository,
+    repository: InMemoryAdminRepository,
+    settings_repository: InMemorySettingsRepository,
+    fake_redis: FakeRedis,
+    payment_registry: PaymentProviderRegistry,
+    fake_task_queue: FakeTaskQueue,
+) -> OrderService:
+    settings_service = SettingsService(
+        cast(SettingsRepository, settings_repository),
+        cast(AdminRepository, repository),
+    )
+    return OrderService(
+        cast(OrderRepository, order_repository),
+        cast(EbookRepository, ebook_repository),
+        settings_service,
+        payment_registry,
+        OrderRateLimitRepository(cast(Redis, fake_redis)),
+        CatalogCacheRepository(cast(Redis, fake_redis)),
+        fake_task_queue,
+        payment_methods={
+            "mynita": "ipay_money",
+            "amanata": "ipay_money",
+            "airtel_money": "ipay_money",
+            "fake": "fake",
+        },
+        fake_payments_enabled=True,
+        rate_limit_attempts=5,
+        rate_limit_window_seconds=60,
+        pending_expiration_minutes=30,
+        reconciliation_minutes=5,
+        task_batch_size=100,
+    )
+
+
+@pytest.fixture
+async def order_client(
+    app: FastAPI,
+    repository: InMemoryAdminRepository,
+    settings_repository: InMemorySettingsRepository,
+    fake_redis: FakeRedis,
+    order_service: OrderService,
+) -> AsyncIterator[AsyncClient]:
+    admin_repository = cast(AdminRepository, repository)
+    token_repository = TokenRepository(cast(Redis, fake_redis))
+    login_attempt_repository = LoginAttemptRepository(cast(Redis, fake_redis))
+    settings_service = SettingsService(
+        cast(SettingsRepository, settings_repository),
+        admin_repository,
+    )
+
+    app.dependency_overrides[get_auth_service] = lambda: AuthService(
+        admin_repository,
+        token_repository,
+        login_attempt_repository,
+    )
+    app.dependency_overrides[get_admin_service] = lambda: AdminService(
+        admin_repository,
+        token_repository,
+    )
+    app.dependency_overrides[get_settings_service] = lambda: settings_service
+    app.dependency_overrides[get_order_service] = lambda: order_service
+    app.state.maintenance_settings_provider = settings_service.get_settings
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+    app.state.maintenance_settings_provider = default_maintenance_settings
 
 
 @pytest.fixture

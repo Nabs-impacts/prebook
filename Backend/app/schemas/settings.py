@@ -10,6 +10,9 @@ class SiteSettings(BaseModel):
     maintenance_message: str = DEFAULT_MAINTENANCE_MESSAGE
     show_reviews_count: bool = True
     show_purchases_count: bool = True
+    payment_mynita_enabled: bool = True
+    payment_amanata_enabled: bool = True
+    payment_airtel_money_enabled: bool = True
 
 
 class SiteSettingsUpdate(BaseModel):
@@ -19,6 +22,9 @@ class SiteSettingsUpdate(BaseModel):
     maintenance_message: str | None = None
     show_reviews_count: bool | None = None
     show_purchases_count: bool | None = None
+    payment_mynita_enabled: bool | None = None
+    payment_amanata_enabled: bool | None = None
+    payment_airtel_money_enabled: bool | None = None
 
     @model_validator(mode="after")
     def check_update(self) -> "SiteSettingsUpdate":

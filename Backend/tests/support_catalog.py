@@ -4,8 +4,11 @@ from math import ceil
 from uuid import UUID, uuid4
 
 from app.models.ebook import Ebook
+from app.models.enums import OrderStatus
+from app.models.order import Order
 from app.models.review import Review
 from app.repositories.ebook import EbookListRow
+from app.repositories.order import OrderAdminFilters, OrderAdminRow
 from app.repositories.review import AdminReviewRow
 
 
@@ -187,11 +190,18 @@ class InMemoryReviewRepository:
 
 
 class InMemoryOrderRepository:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        ebook_lookup: Callable[[UUID], Ebook | None] | None = None,
+    ) -> None:
+        self.orders: dict[UUID, Order] = {}
         self.paid_counts: dict[UUID, int] = {}
         self.ebook_ids_with_orders: set[UUID] = set()
         self.count_paid_by_ebook_calls = 0
         self.count_paid_by_ebooks_calls = 0
+        self.ebook_lookup = ebook_lookup
+        self._idempotency: dict[str, Order] = {}
+        self._provider_references: dict[tuple[str, str], Order] = {}
 
     async def count_paid_by_ebook(self, ebook_id: UUID) -> int:
         self.count_paid_by_ebook_calls += 1
@@ -207,6 +217,102 @@ class InMemoryOrderRepository:
 
     async def exists_for_ebook(self, ebook_id: UUID) -> bool:
         return ebook_id in self.ebook_ids_with_orders
+
+    async def get_by_id(self, order_id: UUID, for_update: bool = False) -> Order | None:
+        return self.orders.get(order_id)
+
+    async def get_by_idempotency_key(self, idempotency_key: str) -> Order | None:
+        return self._idempotency.get(idempotency_key)
+
+    async def get_by_provider_reference(
+        self,
+        provider: str,
+        provider_reference: str,
+        for_update: bool = False,
+    ) -> Order | None:
+        return self._provider_references.get((provider, provider_reference))
+
+    async def list_pending_before(self, cutoff: datetime, limit: int) -> list[Order]:
+        orders = [
+            order
+            for order in self.orders.values()
+            if order.status is OrderStatus.PENDING and order.created_at <= cutoff
+        ]
+        orders.sort(key=lambda order: (order.created_at, order.id))
+        return orders[:limit]
+
+    async def list_admin(
+        self,
+        filters: OrderAdminFilters,
+        offset: int,
+        limit: int,
+    ) -> list[OrderAdminRow]:
+        rows = [
+            self._admin_row(order)
+            for order in self.orders.values()
+            if self._matches(order, filters)
+        ]
+        rows.sort(key=lambda row: (row.order.created_at, row.order.id), reverse=True)
+        return rows[offset : offset + limit]
+
+    async def count_admin(self, filters: OrderAdminFilters) -> int:
+        return sum(1 for order in self.orders.values() if self._matches(order, filters))
+
+    async def get_admin_detail(self, order_id: UUID) -> OrderAdminRow | None:
+        order = self.orders.get(order_id)
+        if order is None:
+            return None
+        return self._admin_row(order)
+
+    async def create(self, order: Order) -> Order:
+        order.id = uuid4()
+        order.created_at = datetime.now(UTC)
+        self.orders[order.id] = order
+        self._reindex()
+        return order
+
+    async def commit(self) -> None:
+        self._reindex()
+
+    async def rollback(self) -> None:
+        return None
+
+    def _reindex(self) -> None:
+        self._idempotency = {
+            order.idempotency_key: order for order in self.orders.values() if order.idempotency_key
+        }
+        self._provider_references = {
+            (order.provider, order.provider_reference): order
+            for order in self.orders.values()
+            if order.provider_reference
+        }
+
+    def _matches(self, order: Order, filters: OrderAdminFilters) -> bool:
+        if filters.status is not None and order.status is not filters.status:
+            return False
+        if filters.ebook_id is not None and order.ebook_id != filters.ebook_id:
+            return False
+        if filters.date_from is not None and order.created_at < filters.date_from:
+            return False
+        if filters.date_to is not None and order.created_at > filters.date_to:
+            return False
+        if filters.payment_method is not None and order.payment_method != filters.payment_method:
+            return False
+        if filters.email and filters.email.strip().lower() not in order.buyer_email.lower():
+            return False
+        if filters.ebook_slug is not None:
+            ebook = self.ebook_lookup(order.ebook_id) if self.ebook_lookup else None
+            if ebook is None or ebook.slug != filters.ebook_slug:
+                return False
+        return True
+
+    def _admin_row(self, order: Order) -> OrderAdminRow:
+        ebook = self.ebook_lookup(order.ebook_id) if self.ebook_lookup else None
+        return OrderAdminRow(
+            order=order,
+            ebook_title=ebook.title if ebook is not None else "",
+            ebook_slug=ebook.slug if ebook is not None else "",
+        )
 
 
 def pages_for(total: int, page_size: int) -> int:

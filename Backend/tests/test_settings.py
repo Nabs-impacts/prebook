@@ -53,6 +53,9 @@ async def test_public_settings_returns_defaults(settings_client: AsyncClient) ->
         "maintenance_message": DEFAULT_MAINTENANCE_MESSAGE,
         "show_reviews_count": True,
         "show_purchases_count": True,
+        "payment_mynita_enabled": True,
+        "payment_amanata_enabled": True,
+        "payment_airtel_money_enabled": True,
     }
     assert response.headers["cache-control"] == "public, max-age=30"
     assert response.headers["etag"].startswith('"')

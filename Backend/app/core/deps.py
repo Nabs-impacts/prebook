@@ -15,6 +15,7 @@ from app.repositories.ebook import EbookRepository
 from app.repositories.health import HealthRepository
 from app.repositories.login_attempt import LoginAttemptRepository
 from app.repositories.order import OrderRepository
+from app.repositories.order_rate_limit import OrderRateLimitRepository
 from app.repositories.review import ReviewRepository
 from app.repositories.review_rate_limit import ReviewRateLimitRepository
 from app.repositories.settings import SettingsRepository
@@ -24,10 +25,13 @@ from app.services.admin import AdminService
 from app.services.auth import AuthService, ensure_admin, ensure_super_admin
 from app.services.ebook import EbookService
 from app.services.health import HealthService
+from app.services.order import OrderService
+from app.services.payment_provider import PaymentProviderRegistry, get_payment_registry
 from app.services.settings import SettingsService
 from app.services.storage import StorageBackend, get_storage_backend
 from app.services.video import VideoService
 from app.services.video_provider import CloudflareStreamProvider, ExternalUrlProvider
+from app.tasks.queue import ArqTaskQueue, TaskQueue
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
@@ -95,8 +99,50 @@ def get_order_repository(session: DbSession) -> OrderRepository:
     return OrderRepository(session)
 
 
+def get_order_rate_limit_repository(redis: RedisClient) -> OrderRateLimitRepository:
+    return OrderRateLimitRepository(redis)
+
+
+def get_payment_provider_registry() -> PaymentProviderRegistry:
+    return get_payment_registry()
+
+
+def get_task_queue() -> TaskQueue:
+    return ArqTaskQueue()
+
+
 def get_catalog_cache_repository(redis: RedisClient) -> CatalogCacheRepository:
     return CatalogCacheRepository(redis)
+
+
+def get_order_service(
+    order_repository: Annotated[OrderRepository, Depends(get_order_repository)],
+    ebook_repository: Annotated[EbookRepository, Depends(get_ebook_repository)],
+    settings_service: Annotated[SettingsService, Depends(get_settings_service)],
+    payment_registry: Annotated[PaymentProviderRegistry, Depends(get_payment_provider_registry)],
+    rate_limit_repository: Annotated[
+        OrderRateLimitRepository, Depends(get_order_rate_limit_repository)
+    ],
+    cache_repository: Annotated[CatalogCacheRepository, Depends(get_catalog_cache_repository)],
+    task_queue: Annotated[TaskQueue, Depends(get_task_queue)],
+) -> OrderService:
+    settings = get_settings()
+    return OrderService(
+        order_repository,
+        ebook_repository,
+        settings_service,
+        payment_registry,
+        rate_limit_repository,
+        cache_repository,
+        task_queue,
+        payment_methods=settings.PAYMENT_METHOD_PROVIDERS,
+        fake_payments_enabled=settings.fake_payments_enabled,
+        rate_limit_attempts=settings.ORDER_RATE_LIMIT_ATTEMPTS,
+        rate_limit_window_seconds=settings.ORDER_RATE_LIMIT_WINDOW_SECONDS,
+        pending_expiration_minutes=settings.ORDER_PENDING_EXPIRATION_MINUTES,
+        reconciliation_minutes=settings.ORDER_RECONCILIATION_MINUTES,
+        task_batch_size=settings.ORDER_TASK_BATCH_SIZE,
+    )
 
 
 def get_review_rate_limit_repository(redis: RedisClient) -> ReviewRateLimitRepository:
@@ -196,6 +242,7 @@ AdminServiceDep = Annotated[AdminService, Depends(get_admin_service)]
 SettingsServiceDep = Annotated[SettingsService, Depends(get_settings_service)]
 EbookServiceDep = Annotated[EbookService, Depends(get_ebook_service)]
 VideoServiceDep = Annotated[VideoService, Depends(get_video_service)]
+OrderServiceDep = Annotated[OrderService, Depends(get_order_service)]
 RequireAdminDep = Annotated[User, Depends(require_admin)]
 RequireSuperAdminDep = Annotated[User, Depends(require_super_admin)]
 OptionalAccessTokenDep = Annotated[str | None, Depends(get_optional_access_token)]

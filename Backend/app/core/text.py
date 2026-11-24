@@ -7,6 +7,14 @@ MULTI_NEWLINE_PATTERN = re.compile(r"\n{3,}")
 MULTI_SPACE_PATTERN = re.compile(r"[ \t]{2,}")
 
 
+def mask_email(email: str) -> str:
+    local, separator, domain = email.strip().partition("@")
+    if not separator or not local or not domain:
+        return "***"
+    visible = local[0] if len(local) == 1 else local[:2]
+    return f"{visible}***@{domain}"
+
+
 def sanitize_text(value: str, max_length: int, *, collapse_whitespace: bool = False) -> str:
     cleaned = value
     previous = ""
