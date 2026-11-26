@@ -13,6 +13,8 @@ class OrderStatus(StrEnum):
     PAID = "paid"
     FAILED = "failed"
     REFUNDED = "refunded"
+    EXPIRED = "expired"
+    MANUAL_REVIEW = "manual_review"
 
 
 class VideoProviderType(StrEnum):
@@ -34,6 +36,9 @@ class AdminAuditAction(StrEnum):
     ADMIN_UPDATED = "admin_updated"
     ADMIN_DELETED = "admin_deleted"
     SETTINGS_UPDATED = "settings_updated"
+    PAYMENT_MANUAL_REVIEW = "payment_manual_review"
+    ORDER_REFUNDED = "order_refunded"
+    ORDER_RECHECKED = "order_rechecked"
 
 
 def enum_values(enum_type: type[PythonEnum]) -> list[str]:

@@ -12,17 +12,12 @@ class OrderCreate(BaseModel):
     ebook_slug: str = Field(min_length=1, max_length=255)
     buyer_name: str = Field(min_length=1, max_length=255)
     buyer_email: EmailStr
-    payment_method: str = Field(min_length=1, max_length=50)
+    payment_method: str | None = Field(default=None, max_length=50)
 
     @field_validator("ebook_slug", "buyer_name")
     @classmethod
     def strip_text(cls, value: str) -> str:
         return value.strip()
-
-    @field_validator("payment_method")
-    @classmethod
-    def normalize_payment_method(cls, value: str) -> str:
-        return value.strip().lower()
 
 
 class OrderCreateResponse(BaseModel):
@@ -30,10 +25,9 @@ class OrderCreateResponse(BaseModel):
     status: OrderStatus
     amount: int
     currency: str
-    payment_method: str
     provider: str
-    redirect_url: str | None
-    instructions: str | None
+    payment_url: str | None
+    payment_expires_at: datetime | None
     created_at: datetime
 
 
@@ -42,7 +36,8 @@ class OrderStatusResponse(BaseModel):
     status: OrderStatus
     amount: int
     currency: str
-    payment_method: str
+    payment_url: str | None
+    payment_expires_at: datetime | None
     created_at: datetime
     paid_at: datetime | None
 
@@ -59,9 +54,9 @@ class AdminOrderRead(BaseModel):
     status: OrderStatus
     provider: str
     provider_reference: str | None
-    payment_method: str
     payment_url: str | None
-    payment_instructions: str | None
+    payment_expires_at: datetime | None
+    payment_failure_reason: str | None
     paid_at: datetime | None
     created_at: datetime
 

@@ -202,6 +202,7 @@ class InMemoryOrderRepository:
         self.ebook_lookup = ebook_lookup
         self._idempotency: dict[str, Order] = {}
         self._provider_references: dict[tuple[str, str], Order] = {}
+        self.revoked_order_ids: set[UUID] = set()
 
     async def count_paid_by_ebook(self, ebook_id: UUID) -> int:
         self.count_paid_by_ebook_calls += 1
@@ -232,14 +233,26 @@ class InMemoryOrderRepository:
     ) -> Order | None:
         return self._provider_references.get((provider, provider_reference))
 
-    async def list_pending_before(self, cutoff: datetime, limit: int) -> list[Order]:
+    async def list_pending_created_after(self, cutoff: datetime, limit: int) -> list[Order]:
         orders = [
             order
             for order in self.orders.values()
-            if order.status is OrderStatus.PENDING and order.created_at <= cutoff
+            if order.status is OrderStatus.PENDING and order.created_at >= cutoff
         ]
         orders.sort(key=lambda order: (order.created_at, order.id))
         return orders[:limit]
+
+    async def list_expired_created_after(self, cutoff: datetime, limit: int) -> list[Order]:
+        orders = [
+            order
+            for order in self.orders.values()
+            if order.status is OrderStatus.EXPIRED and order.created_at >= cutoff
+        ]
+        orders.sort(key=lambda order: (order.created_at, order.id))
+        return orders[:limit]
+
+    async def revoke_download_tokens(self, order_id: UUID) -> None:
+        self.revoked_order_ids.add(order_id)
 
     async def list_admin(
         self,
@@ -295,8 +308,6 @@ class InMemoryOrderRepository:
         if filters.date_from is not None and order.created_at < filters.date_from:
             return False
         if filters.date_to is not None and order.created_at > filters.date_to:
-            return False
-        if filters.payment_method is not None and order.payment_method != filters.payment_method:
             return False
         if filters.email and filters.email.strip().lower() not in order.buyer_email.lower():
             return False

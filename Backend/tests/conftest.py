@@ -32,6 +32,7 @@ from app.repositories.ebook import EbookRepository
 from app.repositories.login_attempt import LoginAttemptRepository
 from app.repositories.order import OrderRepository
 from app.repositories.order_rate_limit import OrderRateLimitRepository
+from app.repositories.payment_state import PaymentStateRepository
 from app.repositories.review import ReviewRepository
 from app.repositories.review_rate_limit import ReviewRateLimitRepository
 from app.repositories.settings import SettingsRepository
@@ -211,11 +212,11 @@ def payment_registry(
         {
             "fake": fake_payment_provider,
             "ipay_money": IPayMoneyProvider(
-                "pk_test",
                 "sk_test",
-                "https://api.i-pay.money",
-                "sandbox",
                 "ipay-webhook-secret",
+                "https://frontend.test",
+                "sandbox",
+                "https://i-pay.money/api/v1",
             ),
         }
     )
@@ -248,17 +249,14 @@ def order_service(
         OrderRateLimitRepository(cast(Redis, fake_redis)),
         CatalogCacheRepository(cast(Redis, fake_redis)),
         fake_task_queue,
-        payment_methods={
-            "mynita": "ipay_money",
-            "amanata": "ipay_money",
-            "airtel_money": "ipay_money",
-            "fake": "fake",
-        },
-        fake_payments_enabled=True,
+        cast(AdminRepository, repository),
+        PaymentStateRepository(cast(Redis, fake_redis)),
+        provider_code="fake",
         rate_limit_attempts=5,
         rate_limit_window_seconds=60,
-        pending_expiration_minutes=30,
-        reconciliation_minutes=5,
+        reconciliation_max_age_minutes=120,
+        reconciliation_interval_minutes=2,
+        reconciliation_max_interval_minutes=30,
         task_batch_size=100,
     )
 

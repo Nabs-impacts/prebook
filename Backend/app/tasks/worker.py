@@ -5,7 +5,7 @@ from arq.connections import RedisSettings
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.tasks.orders import expire_pending_orders, fulfill_order, reconcile_pending_orders
+from app.tasks.orders import fulfill_order, reconcile_payment_orders
 
 
 async def healthcheck_task(ctx: dict[str, Any]) -> str:
@@ -24,12 +24,10 @@ class WorkerSettings:
     functions: ClassVar[list[Any]] = [
         healthcheck_task,
         fulfill_order,
-        expire_pending_orders,
-        reconcile_pending_orders,
+        reconcile_payment_orders,
     ]
     cron_jobs: ClassVar[list[Any]] = [
-        cron(expire_pending_orders, minute=set(range(60))),
-        cron(reconcile_pending_orders, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
+        cron(reconcile_payment_orders, minute=set(range(0, 60, 2))),
     ]
     on_startup = startup
     on_shutdown = shutdown

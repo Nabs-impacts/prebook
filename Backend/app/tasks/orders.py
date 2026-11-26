@@ -9,6 +9,7 @@ from app.repositories.catalog_cache import CatalogCacheRepository
 from app.repositories.ebook import EbookRepository
 from app.repositories.order import OrderRepository
 from app.repositories.order_rate_limit import OrderRateLimitRepository
+from app.repositories.payment_state import PaymentStateRepository
 from app.repositories.settings import SettingsRepository
 from app.services.order import OrderService
 from app.services.payment_provider import get_payment_registry
@@ -33,12 +34,14 @@ async def order_service() -> AsyncIterator[OrderService]:
             OrderRateLimitRepository(redis),
             CatalogCacheRepository(redis),
             ArqTaskQueue(),
-            payment_methods=settings.PAYMENT_METHOD_PROVIDERS,
-            fake_payments_enabled=settings.fake_payments_enabled,
+            AdminRepository(session),
+            PaymentStateRepository(redis),
+            provider_code="ipay_money",
             rate_limit_attempts=settings.ORDER_RATE_LIMIT_ATTEMPTS,
             rate_limit_window_seconds=settings.ORDER_RATE_LIMIT_WINDOW_SECONDS,
-            pending_expiration_minutes=settings.ORDER_PENDING_EXPIRATION_MINUTES,
-            reconciliation_minutes=settings.ORDER_RECONCILIATION_MINUTES,
+            reconciliation_max_age_minutes=settings.ORDER_RECONCILIATION_MAX_AGE_MINUTES,
+            reconciliation_interval_minutes=settings.ORDER_RECONCILIATION_INTERVAL_MINUTES,
+            reconciliation_max_interval_minutes=settings.ORDER_RECONCILIATION_MAX_INTERVAL_MINUTES,
             task_batch_size=settings.ORDER_TASK_BATCH_SIZE,
         )
 
@@ -47,11 +50,6 @@ async def fulfill_order(ctx: dict[str, Any], order_id: str) -> None:
     return None
 
 
-async def expire_pending_orders(ctx: dict[str, Any]) -> int:
+async def reconcile_payment_orders(ctx: dict[str, Any]) -> int:
     async with order_service() as service:
-        return await service.expire_pending_orders()
-
-
-async def reconcile_pending_orders(ctx: dict[str, Any]) -> int:
-    async with order_service() as service:
-        return await service.reconcile_pending_orders()
+        return await service.reconcile_payment_orders()

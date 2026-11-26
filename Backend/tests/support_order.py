@@ -35,7 +35,6 @@ async def seed_ebook(
 
 def order_payload(
     slug: str = "guide-prebook",
-    method: str = "fake",
     email: str = "buyer@example.com",
     name: str = "Acheteur Test",
 ) -> dict[str, str]:
@@ -43,5 +42,4 @@ def order_payload(
         "ebook_slug": slug,
         "buyer_name": name,
         "buyer_email": email,
-        "payment_method": method,
     }

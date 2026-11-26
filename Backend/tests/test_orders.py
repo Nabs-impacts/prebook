@@ -2,14 +2,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID
 
-import pytest
-from app.core.errors import ServiceUnavailableError
 from app.core.security import create_token_pair
-from app.models.enums import OrderStatus, UserRole
+from app.models.enums import AdminAuditAction, OrderStatus, UserRole
 from app.services.order import OrderService
-from app.services.payment_provider import FakePaymentProvider, IPayMoneyProvider
+from app.services.payment_provider import FakePaymentProvider, ProviderPaymentStatus
 from httpx import AsyncClient
-from starlette.requests import Request
 
 from tests.conftest import TEST_FAKE_WEBHOOK_SECRET
 from tests.support import InMemoryAdminRepository, seed_user
@@ -35,7 +32,6 @@ def auth_header(token: str) -> dict[str, str]:
 async def create_order(
     client: AsyncClient,
     *,
-    method: str = "fake",
     email: str = "buyer@example.com",
     slug: str = "guide-prebook",
     idempotency_key: str | None = None,
@@ -43,7 +39,7 @@ async def create_order(
     headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
     response = await client.post(
         "/api/v1/orders",
-        json=order_payload(slug=slug, method=method, email=email),
+        json=order_payload(slug=slug, email=email),
         headers=headers,
     )
     assert response.status_code == 201
@@ -69,11 +65,6 @@ def fake_reference(public_id: str) -> str:
     return f"fake_{public_id}"
 
 
-def build_request(headers: dict[str, str]) -> Request:
-    raw_headers = [(key.lower().encode(), value.encode()) for key, value in headers.items()]
-    return Request({"type": "http", "headers": raw_headers})
-
-
 async def test_create_order_uses_server_price(
     order_client: AsyncClient,
     ebook_repository: InMemoryEbookRepository,
@@ -86,12 +77,12 @@ async def test_create_order_uses_server_price(
     assert body["amount"] == ebook.price == 7500
     assert body["currency"] == "XOF"
     assert body["status"] == "pending"
-    assert body["payment_method"] == "fake"
     assert body["provider"] == "fake"
-    assert body["redirect_url"] == (
+    assert body["payment_url"] == (
         f"https://fake-payments.test/checkout/{fake_reference(body['public_id'])}"
     )
-    assert body["instructions"]
+    assert body["payment_expires_at"] is not None
+    assert "payment_method" not in body
     assert fake_payment_provider is not None
 
 
@@ -120,6 +111,41 @@ async def test_create_order_unknown_ebook(
     assert response.status_code == 404
 
 
+async def test_payment_method_is_optional_and_ignored(
+    order_client: AsyncClient,
+    ebook_repository: InMemoryEbookRepository,
+) -> None:
+    await seed_ebook(ebook_repository)
+    payload = order_payload()
+    payload["payment_method"] = "mynita"
+
+    response = await order_client.post("/api/v1/orders", json=payload)
+
+    assert response.status_code == 201
+    assert response.json()["provider"] == "fake"
+
+
+async def test_payments_disabled_rejects_creation(
+    order_client: AsyncClient,
+    ebook_repository: InMemoryEbookRepository,
+    repository: InMemoryAdminRepository,
+) -> None:
+    await seed_ebook(ebook_repository)
+    await seed_user(repository, "admin@example.com", UserRole.ADMIN)
+    token = await login(order_client, "admin@example.com")
+
+    update = await order_client.patch(
+        "/api/v1/admin/settings",
+        headers=auth_header(token),
+        json={"payments_enabled": False},
+    )
+    assert update.status_code == 200
+
+    response = await order_client.post("/api/v1/orders", json=order_payload())
+
+    assert response.status_code == 400
+
+
 async def test_idempotency_key_reuses_order(
     order_client: AsyncClient,
     ebook_repository: InMemoryEbookRepository,
@@ -145,7 +171,7 @@ async def test_webhook_valid_marks_paid_and_enqueues(
     await seed_ebook(ebook_repository)
     order = await create_order(order_client)
     reference = fake_reference(order["public_id"])
-    fake_payment_provider.set_status(reference, OrderStatus.PAID)
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.SUCCEEDED)
 
     response = await send_webhook(order_client, reference)
 
@@ -181,7 +207,7 @@ async def test_webhook_replay_is_idempotent(
     await seed_ebook(ebook_repository)
     order = await create_order(order_client)
     reference = fake_reference(order["public_id"])
-    fake_payment_provider.set_status(reference, OrderStatus.PAID)
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.SUCCEEDED)
 
     first = await send_webhook(order_client, reference)
     first_status = await order_client.get(f"/api/v1/orders/{order['public_id']}/status")
@@ -207,13 +233,36 @@ async def test_webhook_does_not_trust_payload_status(
     pending_status = await order_client.get(f"/api/v1/orders/{order['public_id']}/status")
     assert pending_status.json()["status"] == "pending"
 
-    fake_payment_provider.set_status(reference, OrderStatus.PAID)
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.SUCCEEDED)
     await send_webhook(order_client, reference, status_value="failed")
     paid_status = await order_client.get(f"/api/v1/orders/{order['public_id']}/status")
     assert paid_status.json()["status"] == "paid"
 
 
-async def test_illegal_transition_is_refused(
+async def test_webhook_failed_keeps_order_pending(
+    order_client: AsyncClient,
+    ebook_repository: InMemoryEbookRepository,
+    order_repository: InMemoryOrderRepository,
+    fake_payment_provider: FakePaymentProvider,
+) -> None:
+    await seed_ebook(ebook_repository)
+    order = await create_order(order_client)
+    reference = fake_reference(order["public_id"])
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.FAILED)
+
+    response = await send_webhook(
+        order_client,
+        reference,
+        status_value="failed",
+    )
+
+    assert response.status_code == 204
+    stored = order_repository.orders[UUID(order["public_id"])]
+    assert stored.status is OrderStatus.PENDING
+    assert stored.payment_failure_reason is None
+
+
+async def test_webhook_out_of_order_does_not_revert_paid(
     order_client: AsyncClient,
     ebook_repository: InMemoryEbookRepository,
     fake_payment_provider: FakePaymentProvider,
@@ -222,13 +271,10 @@ async def test_illegal_transition_is_refused(
     order = await create_order(order_client)
     reference = fake_reference(order["public_id"])
 
-    fake_payment_provider.set_status(reference, OrderStatus.PAID)
-    assert (await send_webhook(order_client, reference)).status_code == 204
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.SUCCEEDED)
+    await send_webhook(order_client, reference)
+    await send_webhook(order_client, reference, status_value="failed")
 
-    fake_payment_provider.set_status(reference, OrderStatus.FAILED)
-    response = await send_webhook(order_client, reference)
-
-    assert response.status_code == 409
     status_response = await order_client.get(f"/api/v1/orders/{order['public_id']}/status")
     assert status_response.json()["status"] == "paid"
 
@@ -242,55 +288,14 @@ async def test_refund_is_allowed_from_paid(
     order = await create_order(order_client)
     reference = fake_reference(order["public_id"])
 
-    fake_payment_provider.set_status(reference, OrderStatus.PAID)
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.SUCCEEDED)
     await send_webhook(order_client, reference)
-    fake_payment_provider.set_status(reference, OrderStatus.REFUNDED)
-    response = await send_webhook(order_client, reference)
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.REFUNDED)
+    response = await send_webhook(order_client, reference, status_value="refunded")
 
     assert response.status_code == 204
     status_response = await order_client.get(f"/api/v1/orders/{order['public_id']}/status")
     assert status_response.json()["status"] == "refunded"
-
-
-async def test_expiration_fails_pending_order_after_provider_check(
-    order_client: AsyncClient,
-    ebook_repository: InMemoryEbookRepository,
-    order_repository: InMemoryOrderRepository,
-    fake_payment_provider: FakePaymentProvider,
-    order_service: OrderService,
-) -> None:
-    await seed_ebook(ebook_repository)
-    order = await create_order(order_client)
-    stored = order_repository.orders[UUID(order["public_id"])]
-    stored.created_at = datetime.now(UTC) - timedelta(minutes=31)
-
-    changed = await order_service.expire_pending_orders()
-
-    assert changed == 1
-    assert stored.status is OrderStatus.FAILED
-    assert fake_payment_provider is not None
-
-
-async def test_expiration_marks_paid_when_provider_confirms(
-    order_client: AsyncClient,
-    ebook_repository: InMemoryEbookRepository,
-    order_repository: InMemoryOrderRepository,
-    fake_payment_provider: FakePaymentProvider,
-    fake_task_queue: FakeTaskQueue,
-    order_service: OrderService,
-) -> None:
-    await seed_ebook(ebook_repository)
-    order = await create_order(order_client)
-    reference = fake_reference(order["public_id"])
-    fake_payment_provider.set_status(reference, OrderStatus.PAID)
-    stored = order_repository.orders[UUID(order["public_id"])]
-    stored.created_at = datetime.now(UTC) - timedelta(minutes=31)
-
-    changed = await order_service.expire_pending_orders()
-
-    assert changed == 1
-    assert stored.status is OrderStatus.PAID
-    assert fake_task_queue.fulfilled == [stored.id]
 
 
 async def test_reconciliation_updates_pending_order(
@@ -304,70 +309,58 @@ async def test_reconciliation_updates_pending_order(
     await seed_ebook(ebook_repository)
     order = await create_order(order_client)
     reference = fake_reference(order["public_id"])
-    fake_payment_provider.set_status(reference, OrderStatus.PAID)
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.SUCCEEDED)
     stored = order_repository.orders[UUID(order["public_id"])]
     stored.created_at = datetime.now(UTC) - timedelta(minutes=6)
 
-    changed = await order_service.reconcile_pending_orders()
+    changed = await order_service.reconcile_payment_orders()
 
     assert changed == 1
     assert stored.status is OrderStatus.PAID
     assert fake_task_queue.fulfilled == [stored.id]
 
 
-async def test_reconciliation_leaves_pending_order_unchanged(
+async def test_reconciliation_marks_expired_then_final_check_fails(
     order_client: AsyncClient,
     ebook_repository: InMemoryEbookRepository,
     order_repository: InMemoryOrderRepository,
+    fake_payment_provider: FakePaymentProvider,
     order_service: OrderService,
 ) -> None:
     await seed_ebook(ebook_repository)
     order = await create_order(order_client)
+    reference = fake_reference(order["public_id"])
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.CANCELLED)
     stored = order_repository.orders[UUID(order["public_id"])]
     stored.created_at = datetime.now(UTC) - timedelta(minutes=6)
 
-    changed = await order_service.reconcile_pending_orders()
+    await order_service.reconcile_payment_orders()
+    assert stored.status.value == "expired"
 
-    assert changed == 0
-    assert stored.status is OrderStatus.PENDING
+    await order_service.reconcile_payment_orders()
+    assert stored.status.value == "failed"
 
 
-async def test_disabled_payment_method_is_rejected(
+async def test_reconciliation_marks_expired_then_late_payment(
     order_client: AsyncClient,
     ebook_repository: InMemoryEbookRepository,
-    repository: InMemoryAdminRepository,
+    order_repository: InMemoryOrderRepository,
+    fake_payment_provider: FakePaymentProvider,
+    order_service: OrderService,
 ) -> None:
     await seed_ebook(ebook_repository)
-    await seed_user(repository, "admin@example.com", UserRole.ADMIN)
-    token = await login(order_client, "admin@example.com")
+    order = await create_order(order_client)
+    reference = fake_reference(order["public_id"])
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.CANCELLED)
+    stored = order_repository.orders[UUID(order["public_id"])]
+    stored.created_at = datetime.now(UTC) - timedelta(minutes=6)
 
-    update = await order_client.patch(
-        "/api/v1/admin/settings",
-        headers=auth_header(token),
-        json={"payment_mynita_enabled": False},
-    )
-    assert update.status_code == 200
+    await order_service.reconcile_payment_orders()
+    assert stored.status.value == "expired"
 
-    response = await order_client.post(
-        "/api/v1/orders",
-        json=order_payload(method="mynita"),
-    )
-
-    assert response.status_code == 400
-
-
-async def test_unknown_payment_method_is_rejected(
-    order_client: AsyncClient,
-    ebook_repository: InMemoryEbookRepository,
-) -> None:
-    await seed_ebook(ebook_repository)
-
-    response = await order_client.post(
-        "/api/v1/orders",
-        json=order_payload(method="inconnu"),
-    )
-
-    assert response.status_code == 400
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.SUCCEEDED)
+    await order_service.reconcile_payment_orders()
+    assert stored.status.value == "paid"
 
 
 async def test_order_rate_limit(
@@ -405,7 +398,6 @@ async def test_admin_orders_requires_admin(
 async def test_admin_orders_filters_and_detail(
     order_client: AsyncClient,
     ebook_repository: InMemoryEbookRepository,
-    order_repository: InMemoryOrderRepository,
     repository: InMemoryAdminRepository,
     fake_payment_provider: FakePaymentProvider,
 ) -> None:
@@ -414,17 +406,10 @@ async def test_admin_orders_filters_and_detail(
     await seed_user(repository, "admin@example.com", UserRole.ADMIN)
     token = await login(order_client, "admin@example.com")
 
-    paid_order = await create_order(
-        order_client,
-        email="alice@example.com",
-    )
-    pending_order = await create_order(
-        order_client,
-        email="bob@example.com",
-        slug=other.slug,
-    )
+    paid_order = await create_order(order_client, email="alice@example.com")
+    pending_order = await create_order(order_client, email="bob@example.com", slug=other.slug)
     reference = fake_reference(paid_order["public_id"])
-    fake_payment_provider.set_status(reference, OrderStatus.PAID)
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.SUCCEEDED)
     await send_webhook(order_client, reference)
 
     headers = auth_header(token)
@@ -460,40 +445,51 @@ async def test_admin_orders_filters_and_detail(
     assert detail.json()["ebook_title"] == ebook.title
     assert detail.json()["buyer_email"] == "alice@example.com"
 
-    stored = order_repository.orders[UUID(pending_order["public_id"])]
-    stored.payment_method = "mynita"
-    await order_repository.commit()
-    by_method = await order_client.get(
-        "/api/v1/admin/orders",
-        headers=headers,
-        params={"payment_method": "mynita"},
+
+async def test_admin_can_refund_order_with_audit(
+    order_client: AsyncClient,
+    ebook_repository: InMemoryEbookRepository,
+    repository: InMemoryAdminRepository,
+    fake_payment_provider: FakePaymentProvider,
+) -> None:
+    await seed_ebook(ebook_repository)
+    actor = await seed_user(repository, "admin@example.com", UserRole.ADMIN)
+    token = await login(order_client, "admin@example.com")
+    order = await create_order(order_client)
+    reference = fake_reference(order["public_id"])
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.SUCCEEDED)
+    await send_webhook(order_client, reference)
+
+    response = await order_client.post(
+        f"/api/v1/admin/orders/{order['public_id']}/refund",
+        headers=auth_header(token),
     )
-    assert by_method.json()["total"] == 1
-    assert by_method.json()["items"][0]["id"] == pending_order["public_id"]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "refunded"
+    assert repository.audit_logs[-1].action is AdminAuditAction.ORDER_REFUNDED
+    assert repository.audit_logs[-1].admin_id == actor.id
 
 
-async def test_ipay_webhook_uses_static_secret_hash() -> None:
-    provider = IPayMoneyProvider(
-        "pk",
-        "sk",
-        "https://api.i-pay.money",
-        "sandbox",
-        "secret-hash",
+async def test_admin_can_recheck_order_with_audit(
+    order_client: AsyncClient,
+    ebook_repository: InMemoryEbookRepository,
+    repository: InMemoryAdminRepository,
+    fake_payment_provider: FakePaymentProvider,
+) -> None:
+    await seed_ebook(ebook_repository)
+    actor = await seed_user(repository, "admin@example.com", UserRole.ADMIN)
+    token = await login(order_client, "admin@example.com")
+    order = await create_order(order_client)
+    reference = fake_reference(order["public_id"])
+    fake_payment_provider.set_status(reference, ProviderPaymentStatus.SUCCEEDED)
+
+    response = await order_client.post(
+        f"/api/v1/admin/orders/{order['public_id']}/recheck",
+        headers=auth_header(token),
     )
 
-    valid = build_request({"Secret-Hash": "secret-hash"})
-    invalid = build_request({"Secret-Hash": "autre"})
-    missing = build_request({})
-
-    assert await provider.verify_webhook(valid) is True
-    assert await provider.verify_webhook(invalid) is False
-    assert await provider.verify_webhook(missing) is False
-    assert provider.extract_reference({"data": {"reference": "ipay_ref"}}) == "ipay_ref"
-    assert provider.extract_reference({"reference": "ipay_ref"}) is None
-
-
-async def test_ipay_payment_operations_are_blocked_without_docs() -> None:
-    provider = IPayMoneyProvider(None, None, "https://api.i-pay.money", "sandbox", None)
-
-    with pytest.raises(ServiceUnavailableError):
-        await provider.get_status("reference")
+    assert response.status_code == 200
+    assert response.json()["status"] == "paid"
+    assert repository.audit_logs[-1].action is AdminAuditAction.ORDER_RECHECKED
+    assert repository.audit_logs[-1].admin_id == actor.id

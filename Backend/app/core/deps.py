@@ -16,6 +16,7 @@ from app.repositories.health import HealthRepository
 from app.repositories.login_attempt import LoginAttemptRepository
 from app.repositories.order import OrderRepository
 from app.repositories.order_rate_limit import OrderRateLimitRepository
+from app.repositories.payment_state import PaymentStateRepository
 from app.repositories.review import ReviewRepository
 from app.repositories.review_rate_limit import ReviewRateLimitRepository
 from app.repositories.settings import SettingsRepository
@@ -103,6 +104,10 @@ def get_order_rate_limit_repository(redis: RedisClient) -> OrderRateLimitReposit
     return OrderRateLimitRepository(redis)
 
 
+def get_payment_state_repository(redis: RedisClient) -> PaymentStateRepository:
+    return PaymentStateRepository(redis)
+
+
 def get_payment_provider_registry() -> PaymentProviderRegistry:
     return get_payment_registry()
 
@@ -125,6 +130,10 @@ def get_order_service(
     ],
     cache_repository: Annotated[CatalogCacheRepository, Depends(get_catalog_cache_repository)],
     task_queue: Annotated[TaskQueue, Depends(get_task_queue)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+    payment_state_repository: Annotated[
+        PaymentStateRepository, Depends(get_payment_state_repository)
+    ],
 ) -> OrderService:
     settings = get_settings()
     return OrderService(
@@ -135,12 +144,14 @@ def get_order_service(
         rate_limit_repository,
         cache_repository,
         task_queue,
-        payment_methods=settings.PAYMENT_METHOD_PROVIDERS,
-        fake_payments_enabled=settings.fake_payments_enabled,
+        admin_repository,
+        payment_state_repository,
+        provider_code="ipay_money",
         rate_limit_attempts=settings.ORDER_RATE_LIMIT_ATTEMPTS,
         rate_limit_window_seconds=settings.ORDER_RATE_LIMIT_WINDOW_SECONDS,
-        pending_expiration_minutes=settings.ORDER_PENDING_EXPIRATION_MINUTES,
-        reconciliation_minutes=settings.ORDER_RECONCILIATION_MINUTES,
+        reconciliation_max_age_minutes=settings.ORDER_RECONCILIATION_MAX_AGE_MINUTES,
+        reconciliation_interval_minutes=settings.ORDER_RECONCILIATION_INTERVAL_MINUTES,
+        reconciliation_max_interval_minutes=settings.ORDER_RECONCILIATION_MAX_INTERVAL_MINUTES,
         task_batch_size=settings.ORDER_TASK_BATCH_SIZE,
     )
 

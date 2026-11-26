@@ -3,9 +3,10 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.download_token import DownloadToken
 from app.models.ebook import Ebook
 from app.models.enums import OrderStatus
 from app.models.order import Order
@@ -18,7 +19,6 @@ class OrderAdminFilters:
     ebook_slug: str | None = None
     date_from: datetime | None = None
     date_to: datetime | None = None
-    payment_method: str | None = None
     email: str | None = None
 
 
@@ -86,18 +86,34 @@ class OrderRepository:
             statement = statement.with_for_update()
         return await self._session.scalar(statement)
 
-    async def list_pending_before(self, cutoff: datetime, limit: int) -> list[Order]:
+    async def list_pending_created_after(self, cutoff: datetime, limit: int) -> list[Order]:
         statement = (
             select(Order)
             .where(
                 Order.status == OrderStatus.PENDING,
-                Order.created_at <= cutoff,
+                Order.created_at >= cutoff,
             )
             .order_by(Order.created_at.asc())
             .limit(limit)
         )
         result = await self._session.scalars(statement)
         return list(result)
+
+    async def list_expired_created_after(self, cutoff: datetime, limit: int) -> list[Order]:
+        statement = (
+            select(Order)
+            .where(
+                Order.status == OrderStatus.EXPIRED,
+                Order.created_at >= cutoff,
+            )
+            .order_by(Order.created_at.asc())
+            .limit(limit)
+        )
+        result = await self._session.scalars(statement)
+        return list(result)
+
+    async def revoke_download_tokens(self, order_id: UUID) -> None:
+        await self._session.execute(delete(DownloadToken).where(DownloadToken.order_id == order_id))
 
     async def list_admin(
         self,
@@ -160,8 +176,6 @@ class OrderRepository:
             conditions.append(Order.created_at >= filters.date_from)
         if filters.date_to is not None:
             conditions.append(Order.created_at <= filters.date_to)
-        if filters.payment_method is not None:
-            conditions.append(Order.payment_method == filters.payment_method)
         if filters.email:
             conditions.append(
                 func.lower(Order.buyer_email).like(f"%{filters.email.strip().lower()}%")

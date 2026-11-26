@@ -38,3 +38,5 @@ def configure_logging(level: str = "INFO") -> None:
         logger = logging.getLogger(logger_name)
         logger.handlers.clear()
         logger.propagate = True
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

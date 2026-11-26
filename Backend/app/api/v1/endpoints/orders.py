@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Header, Query, Request, Response, status
 
 from app.core.deps import OrderServiceDep, RequireAdminDep
 from app.core.request import client_ip
@@ -47,9 +47,10 @@ async def get_order_status(
 async def payment_webhook(
     provider: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     service: OrderServiceDep,
 ) -> Response:
-    await service.handle_webhook(provider, request)
+    await service.handle_webhook(provider, request, background_tasks)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -59,13 +60,15 @@ async def list_admin_orders(
     service: OrderServiceDep,
     status_filter: Annotated[
         str | None,
-        Query(alias="status", pattern="^(pending|paid|failed|refunded)$"),
+        Query(
+            alias="status",
+            pattern="^(pending|paid|failed|refunded|expired|manual_review)$",
+        ),
     ] = None,
     ebook_id: UUID | None = None,
     ebook_slug: str | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
-    payment_method: str | None = None,
     email: str | None = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -76,7 +79,6 @@ async def list_admin_orders(
         ebook_slug=ebook_slug,
         date_from=date_from,
         date_to=date_to,
-        payment_method=payment_method,
         email=email,
     )
     return await service.list_admin_orders(filters, page, page_size)
@@ -89,3 +91,23 @@ async def get_admin_order(
     service: OrderServiceDep,
 ) -> AdminOrderRead:
     return await service.get_admin_order(order_id)
+
+
+@admin_router.post("/{order_id}/refund", response_model=AdminOrderRead)
+async def refund_admin_order(
+    order_id: UUID,
+    request: Request,
+    actor: RequireAdminDep,
+    service: OrderServiceDep,
+) -> AdminOrderRead:
+    return await service.admin_refund_order(actor.id, order_id, client_ip(request))
+
+
+@admin_router.post("/{order_id}/recheck", response_model=AdminOrderRead)
+async def recheck_admin_order(
+    order_id: UUID,
+    request: Request,
+    actor: RequireAdminDep,
+    service: OrderServiceDep,
+) -> AdminOrderRead:
+    return await service.admin_recheck_order(actor.id, order_id, client_ip(request))
